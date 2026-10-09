@@ -21,7 +21,8 @@
       "eta_warning_h": 12,
       "eta_watch_h": 24,
       "rise_watch_m_per_h": 0.10,
-      "trend_window_h": 3
+      "trend_window_h": 3,
+      "use_hii_class": true
     },
     "rain": {
       "next24_watch": 35,
@@ -37,11 +38,11 @@
 
   "chains": [
     {
-      "name": "คลองอู่ตะเภา: สะเดา → คลองหอยโข่ง → หาดใหญ่",
+      "name": "คลองอู่ตะเภา: สะเดา → บางศาลา → หาดใหญ่",
       "stations": [
-        {"match": "X.173A", "label": "X.173A สะเดา", "lag_h_to_next": null},
-        {"match": "X.90", "label": "X.90 คลองหอยโข่ง", "lag_h_to_next": 6},
-        {"match": "X.44", "label": "X.44 หาดใหญ่"}
+        {"match": "X.173A", "label": "X.173A บ้านม่วงก็อง (สะเดา)", "lag_h_to_next": null},
+        {"match": "X.90", "label": "X.90 บ้านบางศาลา (บ้านพรุ หาดใหญ่)", "lag_h_to_next": 6},
+        {"match": "X.44", "label": "X.44 หาดใหญ่ใน"}
       ],
       "downstream_amphoe": "หาดใหญ่",
       "downstream_tambons": ["หาดใหญ่", "คอหงส์", "คลองแห", "คลองอู่ตะเภา", "ควนลัง", "คูเต่า"]
