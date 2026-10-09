@@ -1,0 +1,26 @@
+name: สร้างชั้นข้อมูลถนน
+
+# รันเองครั้งเดียว (หรือปีละครั้งเมื่อถนนเปลี่ยน) ดึงถนนสายหลักจาก OpenStreetMap แล้วตัดเป็นช่วงตามตำบล
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  roads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ดึงถนนจาก OpenStreetMap และแบ่งตามตำบล
+        run: python3 scripts/build_roads.py --static site/data/static
+
+      - name: บันทึกไฟล์ลง repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data/static/roads.geojson
+          git commit -m "สร้างชั้นข้อมูลถนนจาก OpenStreetMap" || echo "ไม่มีการเปลี่ยนแปลง"
+          git push
