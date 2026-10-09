@@ -1,0 +1,61 @@
+name: อัปเดตข้อมูลน้ำ
+
+on:
+  schedule:
+    # ทุก 30 นาที (GitHub อาจคลาดเวลาหรือข้ามรอบได้บ้างเมื่อระบบหนาแน่น)
+    - cron: "7,37 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: ดึงโค้ดจาก repo
+        uses: actions/checkout@v4
+
+      - name: ดึงข้อมูลรอบก่อน (ถ้ามี)
+        run: |
+          mkdir -p prev
+          git fetch --depth 1 origin gh-pages \
+            && git --work-tree=prev checkout origin/gh-pages -- data \
+            || echo "ยังไม่มีข้อมูลรอบก่อน (รอบแรก)"
+          rm -rf prev/data/static
+
+      - name: ดึงข้อมูลและคำนวณระดับเตือนภัย
+        id: fetch
+        continue-on-error: true
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+        run: python3 scripts/update.py --config config.json --static site/data/static --prev prev/data --out out/data
+
+      - name: รวมไฟล์หน้าเว็บ
+        run: |
+          mkdir -p out/data
+          cp -r site/. out/
+          touch out/.nojekyll
+          test -f out/data/latest.json || cp -r prev/data/. out/data/ || true
+
+      - name: เผยแพร่ขึ้น GitHub Pages (สาขา gh-pages)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd out
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "อัปเดตข้อมูล $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
+
+      - name: แจ้งเตือนถ้าดึงข้อมูลไม่สำเร็จ
+        if: steps.fetch.outcome == 'failure'
+        run: echo "::warning::ดึงข้อมูลไม่สำเร็จทุกแหล่ง หน้าเว็บใช้ข้อมูลรอบก่อน ดูรายละเอียดในขั้น 'ดึงข้อมูลและคำนวณระดับเตือนภัย'"
