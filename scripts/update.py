@@ -83,12 +83,17 @@ def get_levels(ctx, idx, fews_thr):
         st = r.get("station") or {}
         geo = r.get("geocode") or {}
         lat, lon = fnum(st.get("tele_station_lat")), fnum(st.get("tele_station_long"))
-        tam = idx.locate(lon, lat) or idx.by_names(th(geo.get("province_name")), th(geo.get("amphoe_name")), th(geo.get("tumbon_name")))
+        # the agency's own tambon first: river gauges often sit on a tambon boundary
+        tam = idx.by_names(th(geo.get("province_name")), th(geo.get("amphoe_name")), th(geo.get("tumbon_name"))) or idx.locate(lon, lat)
         if not tam and norm_name(th(geo.get("province_name"))) not in provs:
             continue
         code = st.get("tele_station_oldcode") or ""
         banks = [fnum(st.get(k)) for k in ("min_bank", "left_bank", "right_bank")]
         bank = banks[0] if banks[0] is not None else min([b for b in banks[1:] if b is not None], default=None)
+        level = fnum(r.get("waterlevel_msl"))
+        bank_note = None
+        if bank is not None and (bank == 0 or (level is not None and level - bank > 5)):
+            bank, bank_note = None, "ระดับตลิ่งในข้อมูลต้นทางผิดปกติ จึงไม่นำมาใช้"
         warn, crit = fnum(st.get("warning_level_m")), fnum(st.get("critical_level_m"))
         thr = fews_thr.get(norm_code(code)) if code else None
         thr_src = None
@@ -104,7 +109,7 @@ def get_levels(ctx, idx, fews_thr):
             "lat": lat, "lon": lon,
             "tc": tam["tc"] if tam else None,
             "geo": " ".join(x for x in (th(geo.get("tumbon_name")), th(geo.get("amphoe_name")), th(geo.get("province_name"))) if x),
-            "level": fnum(r.get("waterlevel_msl")), "bank": bank, "warn": warn, "crit": crit, "thr_src": thr_src,
+            "level": level, "bank": bank, "bank_note": bank_note, "warn": warn, "crit": crit, "thr_src": thr_src,
             "q": fnum(r.get("discharge")), "sit": r.get("situation_level"),
             "time": iso(t),
         })
@@ -119,7 +124,7 @@ def get_rain(ctx, idx):
         st = r.get("station") or {}
         geo = r.get("geocode") or {}
         lat, lon = fnum(st.get("tele_station_lat")), fnum(st.get("tele_station_long"))
-        tam = idx.locate(lon, lat)
+        tam = idx.by_names(th(geo.get("province_name")), th(geo.get("amphoe_name")), th(geo.get("tumbon_name"))) or idx.locate(lon, lat)
         if not tam and norm_name(th(geo.get("province_name"))) not in provs:
             continue
         out.append({
@@ -237,16 +242,20 @@ def station_state(s, thr, max_age_h, now):
         if gap <= 0:
             st = 3
         elif gap <= thr["near_bank_m"]:
-            st = 2
+            rising = s.get("slope") is not None and s["slope"] > 0.005
+            st = 2 if rising else 1
+            if not rising:
+                why.append("ใกล้ตลิ่ง แต่ยังไม่พบว่ากำลังขึ้น")
     else:
-        why.append("ไม่มีระดับตลิ่ง")
+        why.append(s.get("bank_note") or "ไม่มีระดับตลิ่ง")
     if C is not None and L >= C:
         st = 3
     elif W is not None and L >= W:
         st = max(st, 2)
         why.append("ถึงระดับเตือนภัยของสถานี")
-    if s.get("sit") == 4:
+    if s.get("sit") == 4 and thr.get("use_hii_class", True):
         st = max(st, 1)
+        why.append("สสน. จัดเป็น \"น้ำมาก\" (70–100% ของตลิ่ง)")
     sl = s.get("slope")
     if sl is not None:
         if sl > 0.005:
@@ -575,7 +584,7 @@ def main():
         cnt[4 if t["lv"] is None else t["lv"]] += 1
     md = ["## ผลการดึงข้อมูล", "", "| แหล่ง | ผล | จำนวน | หมายเหตุ |", "|---|---|---|---|"]
     for v in ctx.status.values():
-        md.append(f"| {v['label']} | {'✅' if v['ok'] else '❌'} | {v.get('n') or ''} | {v.get('note') or v.get('error', '')} |")
+        md.append(f"| {v['label']} | {'✅' if v['ok'] else '❌'} | {'' if v.get('n') is None else v['n']} | {v.get('note') or v.get('error', '')} |")
     g = latest["gaps"]
     md += ["", "## ภาพรวม", "",
            f"- ตำบลทั้งหมด {len(T)}: ปกติ {cnt[0]} · เฝ้าระวัง {cnt[1]} · เตือนภัย {cnt[2]} · วิกฤต {cnt[3]} · ไม่มีข้อมูล {cnt[4]}",
