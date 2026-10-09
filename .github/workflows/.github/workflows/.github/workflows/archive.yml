@@ -1,0 +1,70 @@
+name: เก็บข้อมูลย้อนหลังและวิเคราะห์เหตุการณ์
+
+# สสน. ให้ดึงย้อนหลังได้สูงสุด 365 วัน จึงตั้งให้รันเองทุกต้นเดือน เพื่อไม่ให้ข้อมูลหาย
+# ผลลัพธ์: สาขา "archive" (CSV รายสถานี) และไฟล์ site/data/static/event_analysis.json
+on:
+  schedule:
+    - cron: "17 20 1 * *"   # วันที่ 2 ของทุกเดือน 03:17 น. เวลาไทย
+  workflow_dispatch:
+    inputs:
+      event_start:
+        description: "วันเริ่มเหตุการณ์ที่จะวิเคราะห์ (ปปปป-ดด-วว ค.ศ.)"
+        default: "2025-11-15"
+      event_end:
+        description: "วันสิ้นสุดเหตุการณ์"
+        default: "2025-12-05"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: เตรียมสาขา archive
+        run: |
+          mkdir arch && cd arch
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git fetch -q --depth 1 origin archive; then
+            git checkout -q -b archive FETCH_HEAD
+          else
+            git checkout -q --orphan archive
+            echo "รอบแรก: สร้างสาขา archive ใหม่"
+          fi
+
+      - name: ดึงระดับน้ำย้อนหลัง 365 วันของทุกสถานีในพื้นที่
+        run: python3 scripts/archive_history.py --config config.json --static site/data/static --archive arch
+
+      - name: บันทึกลงสาขา archive
+        run: |
+          cd arch
+          git add -A
+          git commit -q -m "เก็บข้อมูลย้อนหลัง $(date -u +%Y-%m-%d)" || echo "ไม่มีข้อมูลใหม่"
+          git push -q origin archive
+
+      - name: วิเคราะห์เหตุการณ์
+        run: |
+          python3 scripts/analyze_event.py --config config.json --archive arch \
+            --start "${{ github.event.inputs.event_start || '2025-11-15' }}" \
+            --end "${{ github.event.inputs.event_end || '2025-12-05' }}" \
+            --out site/data/static/event_analysis.json
+
+      - name: บันทึกผลวิเคราะห์ลง repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data/static/event_analysis.json
+          git commit -m "ผลวิเคราะห์เหตุการณ์" || echo "ผลวิเคราะห์ไม่เปลี่ยน"
+          git pull -q --rebase && git push
