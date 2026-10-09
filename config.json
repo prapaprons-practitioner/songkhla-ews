@@ -1,0 +1,60 @@
+{
+  "area_name": "สงขลาและจังหวัดที่มีพรมแดนติดกัน",
+  "provinces": ["สงขลา", "สตูล", "พัทลุง", "ปัตตานี", "ยะลา", "นครศรีธรรมราช"],
+
+  "thaiwater_base": "https://api-v3.thaiwater.net/api/v1/thaiwater30/public",
+  "fews_base": "https://fews2.hii.or.th/model-output/data_portal",
+
+  "max_age_hours": 6,
+  "history_hours": 72,
+
+  "open_meteo": {
+    "models": ["ecmwf_ifs025", "gfs_seamless", "icon_seamless"],
+    "min_interval_minutes": 55,
+    "batch_size": 40
+  },
+
+  "thresholds": {
+    "_note": "ค่าเริ่มต้นเพื่อทดลองใช้ ยังไม่ได้ปรับเทียบกับเหตุการณ์จริง ให้ปรับหลังวิเคราะห์ข้อมูลปี 2568",
+    "station": {
+      "near_bank_m": 0.5,
+      "eta_warning_h": 12,
+      "eta_watch_h": 24,
+      "rise_watch_m_per_h": 0.10,
+      "trend_window_h": 3
+    },
+    "rain": {
+      "next24_watch": 35,
+      "next24_warning": 90,
+      "next24_critical": 150,
+      "acc_watch": 100,
+      "acc_warning": 200,
+      "acc_critical": 350
+    },
+    "soil_wet_m3m3": 0.40,
+    "flashflood_level": 1
+  },
+
+  "chains": [
+    {
+      "name": "คลองอู่ตะเภา: สะเดา → คลองหอยโข่ง → หาดใหญ่",
+      "stations": [
+        {"match": "X.173A", "label": "X.173A สะเดา", "lag_h_to_next": null},
+        {"match": "X.90", "label": "X.90 คลองหอยโข่ง", "lag_h_to_next": 6},
+        {"match": "X.44", "label": "X.44 หาดใหญ่"}
+      ],
+      "downstream_amphoe": "หาดใหญ่",
+      "downstream_tambons": ["หาดใหญ่", "คอหงส์", "คลองแห", "คลองอู่ตะเภา", "ควนลัง", "คูเต่า"]
+    }
+  ],
+
+  "notify": {
+    "min_level": 2,
+    "_note": "ส่งแจ้งเตือนเมื่อมีตำบลขึ้นถึงระดับนี้หรือสูงกว่า (2 = เตือนภัย) ต้องตั้ง secret NTFY_TOPIC ก่อน"
+  },
+
+  "archive": {
+    "event_start": "2025-11-15",
+    "event_end": "2025-12-05"
+  }
+}
