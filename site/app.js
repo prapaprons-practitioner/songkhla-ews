@@ -131,9 +131,9 @@ function refreshMapStyles() {
   rgLayer.clearLayers();
   for (const s of S.latest?.stations || []) {
     if (s.lat == null || s.lon == null) continue;
-    const c = s.stale || s.state == null ? COLX : COL[s.state];
+    const c = s.state == null ? COLX : COL[s.state];
     L.circleMarker([s.lat, s.lon], { pane: "points", radius: 6, color: "#1d232a", weight: 1.2, fillColor: c, fillOpacity: 1 })
-      .bindTooltip(`<b>${esc(s.name)}</b> ${esc(s.code || "")}<br>${s.stale ? "ข้อมูลไม่เป็นปัจจุบัน" : esc(s.why)}`)
+      .bindTooltip(`<b>${esc(s.name)}</b> ${esc(s.code || "")}<br>${esc(s.why)}`)
       .on("click", () => s.tc && select({ pc: S.props[s.tc].pc, ac: S.props[s.tc].ac, tc: s.tc }, true))
       .addTo(stLayer);
   }
@@ -207,7 +207,7 @@ function spark(h) {
   return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="ฝนพยากรณ์รายชั่วโมง 72 ชม."><text x="0" y="9">ฝนพยากรณ์รายชั่วโมง · สูงสุด ${fmt(max, 1)} มม./ชม.</text>${bars}${lab}</svg>`;
 }
 function stationRow(s) {
-  const lvl = s.stale || s.state == null ? null : s.state;
+  const lvl = s.state == null ? null : s.state;
   return `<div class="reason">${badge(lvl)}<div><b>${esc(s.name)}</b> <span class="note">${esc(s.code || "")} · ${esc(s.agency || "")}</span><br>
     ระดับน้ำ ${fmt(s.level, 2)} ม.รทก. · ตลิ่ง ${fmt(s.bank, 2)}${s.warn != null ? ` · ระดับเตือน ${fmt(s.warn, 2)}` : ""}<br>
     <span class="note">${esc(s.why || "")} · วัดเมื่อ ${ago(s.time)}</span></div></div>`;
@@ -402,19 +402,19 @@ function renderStations() {
   for (const c of L0?.chains || []) {
     h += `<div class="card"><h3>${esc(c.name)} ${c.trigger ? badge(c.trigger.lv) : ""}</h3><div class="chain">`;
     c.stations.forEach((s, i) => {
-      h += `<div class="node">${badge(s.found && !s.stale ? s.state : null)}<div><b>${esc(s.label)}</b><br><span class="note">${s.found
-        ? (s.stale ? "ข้อมูลไม่เป็นปัจจุบัน" : `ระดับ ${fmt(s.level, 2)} · ตลิ่ง ${fmt(s.bank, 2)} ม.รทก.${s.eta_h != null ? ` · ถึงตลิ่งใน ~${fmt(s.eta_h)} ชม.` : ""}`)
+      h += `<div class="node">${badge(s.found ? s.state : null)}<div><b>${esc(s.label)}</b><br><span class="note">${s.found
+        ? (s.stale ? (s.state ? "หยุดส่งข้อมูลขณะน้ำสูง" : "ข้อมูลไม่เป็นปัจจุบัน") : `ระดับ ${fmt(s.level, 2)} · ตลิ่ง ${fmt(s.bank, 2)} ม.รทก.${s.eta_h != null ? ` · ถึงตลิ่งใน ~${fmt(s.eta_h)} ชม.` : ""}`)
         : "ไม่พบสถานีนี้ในข้อมูล สสน."}</span></div></div>`;
       if (i < c.stations.length - 1) h += `<div class="lag">น้ำเดินทาง ${s.lag_h_to_next != null ? "~" + s.lag_h_to_next + " ชม." : "ยังไม่ทราบเวลา"}</div>`;
     });
     h += `</div>${c.trigger ? `<div class="warnnote">${esc(c.trigger.msg)}</div>` : ""}</div>`;
   }
-  const sts = [...(L0?.stations || [])].sort((a, b) => ((b.stale ? -1 : b.state ?? -1) - (a.stale ? -1 : a.state ?? -1)) || ((a.gap ?? 99) - (b.gap ?? 99)));
+  const sts = [...(L0?.stations || [])].sort((a, b) => ((b.state ?? -1) - (a.state ?? -1)) || ((a.gap ?? 99) - (b.gap ?? 99)));
   h += `<div class="card"><h3>สถานีวัดระดับน้ำในพื้นที่ (${sts.length})</h3><table class="t"><tr><th>สถานี</th><th>เทียบตลิ่ง</th><th>แนวโน้ม</th><th></th></tr>
     ${sts.map((s) => `<tr class="click" data-tc="${s.tc || ""}"><td>${esc(s.name)}<br><span class="note">${esc(s.code || "")} ${s.tc ? "ต." + esc(S.props[s.tc].t) : ""} · ${ago(s.time)}</span></td>
     <td class="n">${s.gap != null ? (s.gap < 0 ? "+" : "−") + fmt(Math.abs(s.gap), 2) + " ม." : "–"}</td>
     <td class="n">${s.slope != null ? (s.slope > 0 ? "▲ " : s.slope < 0 ? "▼ " : "") + fmt(Math.abs(s.slope), 2) : "–"}</td>
-    <td>${badge(s.stale ? null : s.state)}</td></tr>`).join("")}</table>
+    <td>${badge(s.state)}</td></tr>`).join("")}</table>
     <p class="note">เทียบตลิ่ง: − ต่ำกว่าตลิ่ง, + สูงกว่าตลิ่ง · แนวโน้ม ม./ชม. คำนวณจาก 3 ชม.ล่าสุด (ระบบต้องเก็บข้อมูลอย่างน้อย 3 รอบก่อน)</p></div>`;
   el.innerHTML = h;
   el.querySelectorAll("tr[data-tc]").forEach((tr) => tr.addEventListener("click", () => { const p = S.props[tr.dataset.tc]; if (p) select({ pc: p.pc, ac: p.ac, tc: p.tc }); }));
