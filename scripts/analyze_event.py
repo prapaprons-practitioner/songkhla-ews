@@ -40,7 +40,14 @@ def stats(series, bank):
             rise = max(rise, (series[b] - series[a]) / dt)
     out = {"peak": round(vpk, 2), "peak_time": tpk.strftime("%Y-%m-%d %H:%M"), "max_rise_m_per_h": round(rise, 2),
            "n_hours": len(series)}
+    gaps = [(a, b) for a, b in zip(ks, ks[1:]) if (b - a) > timedelta(hours=3)]
+    out["gap_near_peak"] = any(a <= tpk <= b + timedelta(hours=1) or abs((a - tpk).total_seconds()) <= 12 * 3600 for a, b in gaps)
+    out["gaps"] = [f"{a:%d/%m %H:%M}–{b:%d/%m %H:%M}" for a, b in gaps][:6]
     if bank is not None:
+        out["cross"] = {}
+        for off in (-1, 0, 1, 2):
+            t = next((k for k in ks if series[k] >= bank + off), None)
+            out["cross"][str(off)] = t.strftime("%Y-%m-%d %H:%M") if t else None
         above = [k for k in ks if series[k] >= bank]
         out.update(bank=bank, peak_above_bank=round(vpk - bank, 2), hours_above_bank=len(above),
                    first_above_bank=above[0].strftime("%Y-%m-%d %H:%M") if above else None)
@@ -117,6 +124,14 @@ def main():
                 lag, r = xcorr_lag(series[a], series[b])
                 leg.update(peak_lag_h=round((pb - pa).total_seconds() / 3600, 1), xcorr_lag_h=lag,
                            xcorr_r=round(r, 2) if lag is not None else None)
+                sa = next((x for x in rows if x["id"] == a), {})
+                sb = next((x for x in rows if x["id"] == b), {})
+                leg["peak_suspect"] = bool(sa.get("gap_near_peak") or sb.get("gap_near_peak"))
+                leg["cross_lag_h"] = {}
+                for off in ("-1", "0", "1", "2"):
+                    ta, tb = (sa.get("cross") or {}).get(off), (sb.get("cross") or {}).get(off)
+                    if ta and tb:
+                        leg["cross_lag_h"][off] = round((datetime.strptime(tb, "%Y-%m-%d %H:%M") - datetime.strptime(ta, "%Y-%m-%d %H:%M")).total_seconds() / 3600, 1)
             legs.append(leg)
         chains.append({"name": ch["name"], "legs": legs})
 
@@ -125,11 +140,16 @@ def main():
     save_json(args.out, out, compact=False)
 
     md = [f"## วิเคราะห์เหตุการณ์ {out['window'][0]} ถึง {out['window'][1]}", "",
-          "### เวลาเดินทางของน้ำในห่วงโซ่", "", "| ช่วง | ยอดน้ำห่างกัน (ชม.) | จากความสัมพันธ์ไขว้ (ชม., r) |", "|---|---|---|"]
+          "### เวลาเดินทางของน้ำในห่วงโซ่ (ชม.)", "",
+          "| ช่วง | ยอดน้ำห่างกัน | ความสัมพันธ์ไขว้ (r) | ถึงตลิ่ง−1 ม. | ถึงตลิ่ง | ตลิ่ง+1 ม. | ตลิ่ง+2 ม. |", "|---|---|---|---|---|---|---|"]
     for c in chains:
         for g in c["legs"]:
-            md.append(f"| {g['from']} → {g['to']} | {g.get('peak_lag_h', 'ไม่พบข้อมูล')} | "
-                      f"{g.get('xcorr_lag_h', '-')} ({g.get('xcorr_r', '-')}) |")
+            cl = g.get("cross_lag_h", {})
+            md.append(f"| {g['from']} → {g['to']} | {g.get('peak_lag_h', 'ไม่พบข้อมูล')}{' ⚠️' if g.get('peak_suspect') else ''} | "
+                      f"{g.get('xcorr_lag_h', '-')} ({g.get('xcorr_r', '-')}) | "
+                      + " | ".join(str(cl.get(k, "-")) for k in ("-1", "0", "1", "2")) + " |")
+    md.append("")
+    md.append("⚠️ = มีช่วงข้อมูลขาดใกล้ยอดน้ำ (สถานีหยุดส่งข้อมูล) เวลายอดน้ำอาจคลาดเคลื่อน ให้ดูเวลาที่ถึงระดับต่าง ๆ ประกอบ")
     md += ["", "### สถานีที่น้ำเกินตลิ่งมากที่สุด", "", "| สถานี | อำเภอ | ยอดน้ำเหนือตลิ่ง (ม.) | เวลา | ชม.ที่เกินตลิ่ง | ขึ้นเร็วสุด (ม./ชม.) |", "|---|---|---|---|---|---|"]
     for r in rows[:25]:
         md.append(f"| {r['name']} {r['code']} | {r['amphoe']} | {r.get('peak_above_bank', '-')} | {r['peak_time']} | "

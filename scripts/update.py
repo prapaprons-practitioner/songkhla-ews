@@ -232,6 +232,14 @@ def station_state(s, thr, max_age_h, now):
     s["state"], s["why"], s["eta_h"] = None, "", None
     if s["stale"] or s["level"] is None:
         s["why"] = "ข้อมูลไม่เป็นปัจจุบัน" if s["level"] is not None else "ไม่มีค่าระดับน้ำ"
+        # a gauge that goes silent while the water is high must not turn "grey"
+        # (Nov 2025: X.90 stopped reporting for ~23 h right at the peak)
+        if (s["level"] is not None and s["bank"] is not None and s["age_h"] is not None
+                and s["age_h"] <= 24 and s["bank"] - s["level"] <= thr["near_bank_m"]):
+            gap = s["bank"] - s["level"]
+            s["state"] = 2
+            s["why"] = (f"หยุดส่งข้อมูลขณะน้ำสูง: ค่าล่าสุด{'สูงกว่า' if gap < 0 else 'ต่ำกว่า'}ตลิ่ง {abs(gap):.2f} ม. "
+                        f"เมื่อ {s['age_h']:.0f} ชม.ก่อน ให้ถือว่ายังเสี่ยงจนกว่าจะยืนยันได้")
         return
     L, B, W, C = s["level"], s["bank"], s["warn"], s["crit"]
     st, why = 0, []
@@ -400,14 +408,18 @@ def compute(ctx, tam_geo, admin, stations, gauges, fc, ff):
             rows.append({"label": cs["label"], "match": cs["match"], "found": bool(s), "k": s["k"] if s else None,
                          "state": s["state"] if s else None, "level": s["level"] if s else None, "bank": s["bank"] if s else None,
                          "eta_h": s["eta_h"] if s else None, "stale": s["stale"] if s else None,
+                         "gap": s.get("gap") if s else None,
                          "lag_h_to_next": cs.get("lag_h_to_next")})
         trig, msgs, etas = None, [], []
         for i, r in enumerate(rows[:-1]):
             if r["state"] and r["state"] >= 2:
                 lags = [x["lag_h_to_next"] for x in rows[i:-1]]
                 eta = sum(lags) if all(v is not None for v in lags) else None
-                lv = 2 if r["state"] >= 3 else 1
-                msgs.append(f"{r['label']} {'ล้นตลิ่งแล้ว' if r['state'] >= 3 else 'ใกล้ตลิ่ง'}"
+                far_above = r["gap"] is not None and r["gap"] <= -ch.get("critical_above_bank_m", 99)
+                lv = 3 if far_above else 2 if r["state"] >= 3 else 1
+                what = (f"สูงกว่าตลิ่ง {-r['gap']:.1f} ม." if far_above else "ล้นตลิ่งแล้ว" if r["state"] >= 3
+                        else "หยุดส่งข้อมูลขณะน้ำสูง" if r["stale"] else "ใกล้ตลิ่ง")
+                msgs.append(f"{r['label']} {what}"
                             + (f" (น้ำอาจถึงปลายทางในราว {eta:.0f} ชม.)" if eta is not None else " (ยังไม่ทราบเวลาเดินทางของน้ำ)"))
                 if eta is not None:
                     etas.append(eta)
