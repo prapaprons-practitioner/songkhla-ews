@@ -213,6 +213,121 @@ function stationRow(s) {
     <span class="note">${esc(s.why || "")} · วัดเมื่อ ${ago(s.time)}</span></div></div>`;
 }
 
+/* ------------------------------------------------------------------ benchmark: compare with a past event */
+const BM = () => S.event?.benchmark;
+const bmTime = (i) => {
+  const t = new Date(new Date(BM().start).getTime() + i * 3600e3);
+  return t.toLocaleString("th-TH", { day: "numeric", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }) + " น.";
+};
+const hrs = (h) => (h >= 48 ? `${fmt(h / 24, h >= 240 ? 0 : 1)} วัน (${fmt(h)} ชม.)` : `${fmt(h)} ชม.`);
+
+/* Where does the level now sit on the past event's rising limb? */
+function analog(s) {
+  const b = BM()?.stations?.[String(s.id)];
+  if (!b || s.level == null || s.bank == null || s.state == null) return null;
+  const rel = s.level - s.bank;
+  const pk = b.peak_i, relPk = b.rel[pk];
+  // each station's own pre-event level (median of the first two days of the window)
+  const pre = b.rel.slice(0, 48).filter((v) => v != null).sort((x, y) => x - y);
+  const base = pre.length ? pre[Math.floor(pre.length / 2)] : null;
+  const frac = base != null && relPk > base ? (rel - base) / (relPk - base) : null;
+  // compare only once the water has made a real part of that event's rise, and is near the bank
+  const active = (s.state || 0) >= 2 || (rel >= -BM().activate_below_bank_m && frac != null && frac >= 0.3);
+  const r = { b, rel, pk, relPk, base, frac, active };
+  if (rel > relPk) { r.above = true; return r; }
+  const i = b.rel.findIndex((v, j) => j <= pk && v != null && v >= rel);
+  // a match in the first two days of the window is the pre-event baseline, not the flood
+  if (i < 48) { r.beforeStart = true; return r; }
+  r.i = i;
+  r.hToPeak = pk - i;
+  if (rel < 0) {
+    const ib = b.rel.findIndex((v, j) => j >= i && j <= pk && v != null && v >= 0);
+    r.hToBank = ib >= 0 ? ib - i : null;
+  }
+  return r;
+}
+
+function analogShort(s) {
+  const r = analog(s);
+  if (!r || !r.active) return "";
+  if (r.above) return `สูงกว่ายอดน้ำ ${BM().label}`;
+  if (r.i == null) return "";
+  return `เทียบ ${BM().label}: ≈ ${bmTime(r.i)} · อีก ${hrs(r.hToPeak)} ถึงยอดน้ำ`;
+}
+
+function benchCard(s) {
+  const r = analog(s);
+  if (!r) return "";
+  const lab = BM().label;
+  const relTxt = (v) => `${v < 0 ? "ต่ำกว่า" : "สูงกว่า"}ตลิ่ง ${fmt(Math.abs(v), 2)} ม.`;
+  let msg;
+  if (r.above) {
+    msg = `<div class="warnnote"><b>ระดับน้ำตอนนี้สูงกว่ายอดน้ำ ${lab}</b> (ตอนนี้${relTxt(r.rel)} · ยอดน้ำ ${lab} ${relTxt(r.relPk)})</div>`;
+  } else if (!r.active || r.i == null) {
+    msg = `<p class="note">ตอนนี้${relTxt(r.rel)}${r.frac != null ? ` (คิดเป็น ${fmt(Math.max(0, r.frac) * 100)}% ของระดับที่น้ำขึ้นใน ${lab})` : ""} ยังไม่ถึงช่วงน้ำขึ้นจริงของเหตุการณ์ ${lab} จึงยังไม่เทียบเวลา · ${lab} ที่สถานีนี้ยอดน้ำ${relTxt(r.relPk)} เมื่อ ${bmTime(r.pk)}</p>`;
+  } else {
+    msg = `<div class="bm-msg"><b>ระดับนี้เท่ากับ ${bmTime(r.i)}</b> ในเหตุการณ์ ${lab}<br>
+      ตอนนั้น${r.hToBank != null ? `อีก <b>${hrs(r.hToBank)}</b> น้ำถึงตลิ่ง และ` : ""}อีก <b>${hrs(r.hToPeak)}</b> ถึงยอดน้ำ (${relTxt(r.relPk)})</div>
+      ${s.slope != null && s.slope < -0.005 ? `<p class="note">ตอนนี้ระดับน้ำกำลังลด ซึ่งต่างจากปี 2568 ที่ช่วงนี้น้ำยังขึ้นต่อ</p>` : ""}
+      <p class="note">เส้นทาง ${lab} เป็นสถานการณ์หนึ่งที่เคยเกิด ไม่ใช่การพยากรณ์ น้ำจะขึ้นต่อหรือไม่ขึ้นกับฝนที่จะตกต่อ</p>`;
+  }
+  if (r.b.gap_near_peak) msg += `<p class="note">⚠️ ${lab} สถานีนี้หยุดส่งข้อมูลช่วงใกล้ยอดน้ำ ยอดน้ำจริงอาจสูงกว่าที่แสดง</p>`;
+  return `<div class="card bm"><h3>เทียบกับน้ำท่วม ${lab}: ${esc(s.name)} ${esc(s.code || "")}</h3>${msg}${benchChart(s, r)}</div>`;
+}
+
+function benchChart(s, r) {
+  const b = r.b, n = b.rel.length;
+  const x0 = Math.max(0, r.pk - 120), x1 = Math.min(n - 1, r.pk + 48);
+  const W = 360, H = 150, L = 34, R = 8, T = 10, B = 22;
+  // current series, aligned so "now" sits at the matching moment of the past event
+  const cur = [];
+  const pts = S.hist?.[s.k] || [];
+  if (r.i != null && r.active) {
+    const now = new Date(s.time).getTime();
+    for (const [t, v] of pts) {
+      const x = r.i - (now - new Date(t).getTime()) / 3600e3;
+      if (x >= x0 && x <= x1 && v != null) cur.push([x, v - s.bank]);
+    }
+    cur.push([r.i, r.rel]);
+  }
+  const ys = b.rel.slice(x0, x1 + 1).filter((v) => v != null).concat(cur.map((p) => p[1]), [r.rel, 0]);
+  const y0 = Math.min(...ys) - 0.3, y1 = Math.max(...ys) + 0.4;
+  const X = (i) => L + ((i - x0) / (x1 - x0)) * (W - L - R);
+  const Y = (v) => T + ((y1 - v) / (y1 - y0)) * (H - T - B);
+  let past = "", seg = [];
+  const flush = () => { if (seg.length > 1) past += `<polyline class="bm-past" points="${seg.join(" ")}"/>`; seg = []; };
+  for (let i = x0; i <= x1; i++) { const v = b.rel[i]; if (v == null) flush(); else seg.push(`${X(i).toFixed(1)},${Y(v).toFixed(1)}`); }
+  flush();
+  const ticks = [];
+  for (let d = -5; d <= 2; d++) {
+    const i = r.pk + d * 24;
+    if (i >= x0 && i <= x1) ticks.push(`<line class="bm-grid" x1="${X(i)}" x2="${X(i)}" y1="${T}" y2="${H - B}"/><text class="bm-ax" x="${X(i)}" y="${H - 8}" text-anchor="middle">${d ? (d > 0 ? "+" : "−") + Math.abs(d) + " วัน" : "ยอดน้ำ"}</text>`);
+  }
+  const yt = [];
+  for (let v = Math.ceil(y0); v <= Math.floor(y1); v++) yt.push(`<text class="bm-ax" x="${L - 4}" y="${Y(v) + 3}" text-anchor="end">${v > 0 ? "+" : ""}${v}</text>`);
+  const nowEl = cur.length > 1
+    ? `<polyline class="bm-now" points="${cur.map(([x, v]) => `${X(x).toFixed(1)},${Y(v).toFixed(1)}`).join(" ")}"/>`
+    : "";
+  const nowDot = r.i != null && r.active
+    ? `<circle class="bm-dot" cx="${X(r.i)}" cy="${Y(r.rel)}" r="4"/><text class="bm-lbl" x="${X(r.i) - 6}" y="${Y(r.rel) - 8}" text-anchor="end">ตอนนี้</text>`
+    : `<line class="bm-nowline" x1="${L}" x2="${W - R}" y1="${Y(r.rel)}" y2="${Y(r.rel)}"/><text class="bm-lbl" x="${W - R}" y="${Y(r.rel) - 4}" text-anchor="end">ระดับตอนนี้</text>`;
+  return `<svg class="bm-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="กราฟระดับน้ำเทียบตลิ่ง ปัจจุบันเทียบ ${BM().label}">
+    ${ticks.join("")}${yt.join("")}
+    <line class="bm-bank" x1="${L}" x2="${W - R}" y1="${Y(0)}" y2="${Y(0)}"/><text class="bm-ax" x="${L + 2}" y="${Y(0) - 3}">ตลิ่ง</text>
+    ${past}<circle class="bm-pk" cx="${X(r.pk)}" cy="${Y(r.relPk)}" r="3"/>
+    ${nowEl}${nowDot}
+  </svg>
+  <div class="bm-legend"><span><i class="lp"></i>${esc(BM().label)}</span><span><i class="ln"></i>ตอนนี้${r.i != null && r.active ? " (7 วันล่าสุด วางตรงจุดที่ระดับเท่ากัน)" : ""}</span><span class="note">แกนตั้ง: เมตร เทียบตลิ่ง</span></div>`;
+}
+
+async function ensureHist() {
+  if (S.hist || S.histLoading) return;
+  S.histLoading = true;
+  S.hist = (await getJSON("data/history.json", true)) || {};
+  S.histLoading = false;
+  if (S.sel.tc) renderArea();
+}
+
 /* ------------------------------------------------------------------ tab: area */
 function renderArea() {
   const el = $("#tab-area");
@@ -302,6 +417,10 @@ function tambonDetail(tc) {
     : '<div class="note">ไม่พบปัจจัยเสี่ยงจากข้อมูลที่มีอยู่</div>'}</div>`;
   if (!sts.length) h += `<div class="warnnote">ตำบลนี้ไม่มีสถานีวัดระดับน้ำ ระดับเตือนภัยมาจากฝนพยากรณ์ระดับอำเภอ น้ำป่า และน้ำจากต้นน้ำเท่านั้น</div>`;
   if (sts.length) h += `<div class="card"><h3>สถานีวัดระดับน้ำในตำบล</h3>${sts.map(stationRow).join("")}</div>`;
+  if (BM()) {
+    const bc = sts.map(benchCard).filter(Boolean);
+    if (bc.length) { h += bc.join(""); ensureHist(); }
+  }
   h += rainCard(p.ac);
   if (rgs.length) h += `<div class="card"><h3>สถานีวัดฝนในตำบล</h3><div class="kv">${rgs.map((g) => `<span class="k">${esc(g.name)}</span><span class="v">${fmt(g.r24, 1)} มม. <span class="note">${ago(g.time)}</span></span>`).join("")}</div></div>`;
   const ff = S.latest?.flashflood?.[tc];
@@ -404,14 +523,14 @@ function renderStations() {
     c.stations.forEach((s, i) => {
       h += `<div class="node">${badge(s.found ? s.state : null)}<div><b>${esc(s.label)}</b><br><span class="note">${s.found
         ? (s.stale ? (s.state ? "หยุดส่งข้อมูลขณะน้ำสูง" : "ข้อมูลไม่เป็นปัจจุบัน") : `ระดับ ${fmt(s.level, 2)} · ตลิ่ง ${fmt(s.bank, 2)} ม.รทก.${s.eta_h != null ? ` · ถึงตลิ่งใน ~${fmt(s.eta_h)} ชม.` : ""}`)
-        : "ไม่พบสถานีนี้ในข้อมูล สสน."}</span></div></div>`;
+        : "ไม่พบสถานีนี้ในข้อมูล สสน."}</span>${(() => { const st = (L0.stations || []).find((x) => x.k === s.k); const a = st && analogShort(st); return a ? `<br><span class="bm-short">${esc(a)}</span>` : ""; })()}</div></div>`;
       if (i < c.stations.length - 1) h += `<div class="lag">น้ำเดินทาง ${s.lag_h_to_next != null ? "~" + s.lag_h_to_next + " ชม." : "ยังไม่ทราบเวลา"}</div>`;
     });
     h += `</div>${c.trigger ? `<div class="warnnote">${esc(c.trigger.msg)}</div>` : ""}</div>`;
   }
   const sts = [...(L0?.stations || [])].sort((a, b) => ((b.state ?? -1) - (a.state ?? -1)) || ((a.gap ?? 99) - (b.gap ?? 99)));
   h += `<div class="card"><h3>สถานีวัดระดับน้ำในพื้นที่ (${sts.length})</h3><table class="t"><tr><th>สถานี</th><th>เทียบตลิ่ง</th><th>แนวโน้ม</th><th></th></tr>
-    ${sts.map((s) => `<tr class="click" data-tc="${s.tc || ""}"><td>${esc(s.name)}<br><span class="note">${esc(s.code || "")} ${s.tc ? "ต." + esc(S.props[s.tc].t) : ""} · ${ago(s.time)}</span></td>
+    ${sts.map((s) => `<tr class="click" data-tc="${s.tc || ""}"><td>${esc(s.name)}<br><span class="note">${esc(s.code || "")} ${s.tc ? "ต." + esc(S.props[s.tc].t) : ""} · ${ago(s.time)}</span>${analogShort(s) ? `<br><span class="bm-short">${esc(analogShort(s))}</span>` : ""}</td>
     <td class="n">${s.gap != null ? (s.gap < 0 ? "+" : "−") + fmt(Math.abs(s.gap), 2) + " ม." : "–"}</td>
     <td class="n">${s.slope != null ? (s.slope > 0 ? "▲ " : s.slope < 0 ? "▼ " : "") + fmt(Math.abs(s.slope), 2) : "–"}</td>
     <td>${badge(s.state)}</td></tr>`).join("")}</table>

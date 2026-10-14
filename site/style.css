@@ -129,3 +129,20 @@ table.t tr.click:hover { background: var(--surface-2); }
   .tabbody { overflow: visible; }
   .top { padding: 8px 16px; }
 }
+
+/* comparison with a past event */
+.bm-msg { font-size: 14px; background: var(--surface-2); border-left: 3px solid var(--accent); padding: 6px 10px; border-radius: 4px; margin: 4px 0 6px; }
+.bm-chart { width: 100%; height: auto; display: block; margin-top: 6px; }
+.bm-past { fill: none; stroke: var(--ink-3); stroke-width: 1.6; }
+.bm-now { fill: none; stroke: var(--accent); stroke-width: 2.4; }
+.bm-dot { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
+.bm-pk { fill: var(--ink-3); }
+.bm-nowline { stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 5 3; }
+.bm-bank { stroke: var(--lv3); stroke-width: 1; stroke-dasharray: 3 3; }
+.bm-grid { stroke: var(--line); stroke-width: 1; }
+.bm-ax { fill: var(--ink-3); font-size: 9px; }
+.bm-lbl { fill: var(--accent); font-size: 10px; font-weight: 600; }
+.bm-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.bm-legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+.bm-legend .lp { background: var(--ink-3); } .bm-legend .ln { background: var(--accent); }
+.bm-short { font-size: 12px; color: var(--accent); }
