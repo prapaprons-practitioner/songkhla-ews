@@ -232,7 +232,8 @@ function analog(s) {
   const base = pre.length ? pre[Math.floor(pre.length / 2)] : null;
   const frac = base != null && relPk > base ? (rel - base) / (relPk - base) : null;
   // compare only once the water has made a real part of that event's rise, and is near the bank
-  const active = (s.state || 0) >= 2 || (rel >= -BM().activate_below_bank_m && frac != null && frac >= 0.3);
+  // stations whose level barely moved in that event (lake / tidal gauges) are not comparable
+  const active = rel >= -BM().activate_below_bank_m && frac != null && frac >= 0.3;
   const r = { b, rel, pk, relPk, base, frac, active };
   if (rel > relPk) { r.above = true; return r; }
   const i = b.rel.findIndex((v, j) => j <= pk && v != null && v >= rel);
@@ -263,6 +264,8 @@ function benchCard(s) {
   let msg;
   if (r.above) {
     msg = `<div class="warnnote"><b>ระดับน้ำตอนนี้สูงกว่ายอดน้ำ ${lab}</b> (ตอนนี้${relTxt(r.rel)} · ยอดน้ำ ${lab} ${relTxt(r.relPk)})</div>`;
+  } else if (r.frac == null) {
+    msg = `<p class="note">ใน ${lab} ระดับน้ำที่สถานีนี้ไม่ได้ขึ้นชัดเจน (อาจเป็นสถานีที่ขึ้นลงตามน้ำทะเลหรือทะเลสาบ) จึงไม่เทียบเวลา</p>`;
   } else if (!r.active || r.i == null) {
     msg = `<p class="note">ตอนนี้${relTxt(r.rel)}${r.frac != null ? ` (คิดเป็น ${fmt(Math.max(0, r.frac) * 100)}% ของระดับที่น้ำขึ้นใน ${lab})` : ""} ยังไม่ถึงช่วงน้ำขึ้นจริงของเหตุการณ์ ${lab} จึงยังไม่เทียบเวลา · ${lab} ที่สถานีนี้ยอดน้ำ${relTxt(r.relPk)} เมื่อ ${bmTime(r.pk)}</p>`;
   } else {
