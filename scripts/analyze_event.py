@@ -137,7 +137,25 @@ def main():
 
     out = {"window": [start.strftime("%Y-%m-%d"), (end - timedelta(days=1)).strftime("%Y-%m-%d")],
            "generated_at": datetime.now(ICT).strftime("%Y-%m-%d %H:%M"), "stations": rows, "chains": chains}
-    save_json(args.out, out, compact=False)
+    # benchmark: hourly level relative to bank for every station, used by the web page
+    # to answer "the level now equals which moment of this event, and what came next"
+    n_h = int((end - start).total_seconds() // 3600)
+    bench = {}
+    for r in rows:
+        sid, bank = r["id"], r.get("bank")
+        if bank is None or r["n_hours"] < n_h * 0.4:
+            continue
+        rel = [None] * n_h
+        for k, v in series[sid].items():
+            i = int((k - start).total_seconds() // 3600)
+            if 0 <= i < n_h:
+                rel[i] = round(v - bank, 2)
+        peak_i = int((datetime.strptime(r["peak_time"], "%Y-%m-%d %H:%M").replace(tzinfo=ICT) - start).total_seconds() // 3600)
+        bench[sid] = {"rel": rel, "peak_i": peak_i, "gap_near_peak": r.get("gap_near_peak", False)}
+    bcfg = cfg.get("benchmark", {})
+    out["benchmark"] = {"label": bcfg.get("label", "พ.ย. 2568"), "start": start.isoformat(),
+                        "activate_below_bank_m": bcfg.get("activate_below_bank_m", 3.0), "stations": bench}
+    save_json(args.out, out)
 
     md = [f"## วิเคราะห์เหตุการณ์ {out['window'][0]} ถึง {out['window'][1]}", "",
           "### เวลาเดินทางของน้ำในห่วงโซ่ (ชม.)", "",
