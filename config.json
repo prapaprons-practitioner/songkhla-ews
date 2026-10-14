@@ -6,7 +6,7 @@
   "fews_base": "https://fews2.hii.or.th/model-output/data_portal",
 
   "max_age_hours": 6,
-  "history_hours": 72,
+  "history_hours": 168,
 
   "open_meteo": {
     "models": ["ecmwf_ifs025", "gfs_seamless", "icon_seamless"],
@@ -54,6 +54,12 @@
   "notify": {
     "min_level": 2,
     "_note": "ส่งแจ้งเตือนเมื่อมีตำบลขึ้นถึงระดับนี้หรือสูงกว่า (2 = เตือนภัย) ต้องตั้ง secret NTFY_TOPIC ก่อน"
+  },
+
+  "benchmark": {
+    "label": "พ.ย. 2568",
+    "activate_below_bank_m": 3.0,
+    "_note": "เทียบเวลากับเหตุการณ์ในอดีตเมื่อระดับน้ำขึ้นมาอยู่ต่ำกว่าตลิ่งไม่เกินค่านี้ (เมตร) หรือสถานีอยู่ระดับเฝ้าระวังขึ้นไป"
   },
 
   "archive": {
