@@ -225,6 +225,40 @@ def slope_m_per_h(points, window_h):
     return None if den == 0 else sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den
 
 
+def norm_levels(n):
+    """Thresholds for gauges whose normal water sits near the bank (lake / tidal / low bank):
+    compare with the gauge's own normal high (p99 of a year without the flood) and the 2025 flood peak."""
+    p99, pk = n["p99"], n.get("event_peak")
+    span = (pk - p99) if pk is not None and pk - p99 >= 0.3 else 0.9
+    return p99, round(p99 + span / 3, 2), round(p99 + 2 * span / 3, 2)
+
+
+def station_state_norm(s, thr):
+    n = s["norm"]
+    watch, warn, crit = norm_levels(n)
+    L, sl = s["level"], s.get("slope")
+    st = 3 if L >= crit else 2 if L >= warn else 1 if L > watch else 0
+    if s["bank"] is not None:
+        s["gap"] = round(s["bank"] - L, 2)
+    why = [f"สถานีนี้ระดับน้ำปกติอยู่ใกล้ตลิ่ง (ทะเล/ทะเลสาบ/ตลิ่งต่ำ) จึงเทียบกับระดับของตัวเอง: "
+           f"ตอนนี้ {L:.2f} ม.รทก. · สูงปกติ {watch:.2f} · เตือนภัย {warn:.2f} · วิกฤต {crit:.2f}"]
+    if sl is not None:
+        if sl > 0.005:
+            why.append(f"กำลังขึ้น {sl:.2f} ม./ชม.")
+        elif sl < -0.005:
+            why.append(f"กำลังลด {abs(sl):.2f} ม./ชม.")
+        # tides rise every few hours: only project when the water is already above its normal high
+        if sl > 0.005 and watch < L < warn:
+            eta = (warn - L) / sl
+            s["eta_h"] = round(eta, 1)
+            if eta <= thr["eta_warning_h"]:
+                st = max(st, 2)
+            if eta <= thr["eta_watch_h"]:
+                st = max(st, 1)
+                why.append(f"ถ้าขึ้นต่อในอัตรานี้ จะถึงระดับเตือนภัยใน ~{eta:.0f} ชม.")
+    s["state"], s["why"] = st, " · ".join(why)
+
+
 def station_state(s, thr, max_age_h, now):
     t = parse_iso(s["time"])
     s["age_h"] = round((now - t).total_seconds() / 3600, 1) if t else None
@@ -234,13 +268,19 @@ def station_state(s, thr, max_age_h, now):
         s["why"] = "ข้อมูลไม่เป็นปัจจุบัน" if s["level"] is not None else "ไม่มีค่าระดับน้ำ"
         # a gauge that goes silent while the water is high must not turn "grey"
         # (Nov 2025: X.90 stopped reporting for ~23 h right at the peak)
-        if (s["level"] is not None and s["bank"] is not None and s["age_h"] is not None
+        if s.get("norm") and s["level"] is not None and s["age_h"] is not None and s["age_h"] <= 24:
+            if s["level"] >= norm_levels(s["norm"])[1]:
+                s["state"] = 2
+                s["why"] = f"หยุดส่งข้อมูลขณะน้ำสูง: ค่าล่าสุด {s['level']:.2f} ม.รทก. เมื่อ {s['age_h']:.0f} ชม.ก่อน"
+        elif (s["level"] is not None and s["bank"] is not None and s["age_h"] is not None
                 and s["age_h"] <= 24 and s["bank"] - s["level"] <= thr["near_bank_m"]):
             gap = s["bank"] - s["level"]
             s["state"] = 2
             s["why"] = (f"หยุดส่งข้อมูลขณะน้ำสูง: ค่าล่าสุด{'สูงกว่า' if gap < 0 else 'ต่ำกว่า'}ตลิ่ง {abs(gap):.2f} ม. "
                         f"เมื่อ {s['age_h']:.0f} ชม.ก่อน ให้ถือว่ายังเสี่ยงจนกว่าจะยืนยันได้")
         return
+    if s.get("norm"):
+        return station_state_norm(s, thr)
     L, B, W, C = s["level"], s["bank"], s["warn"], s["crit"]
     st, why = 0, []
     if B is not None:
@@ -469,6 +509,8 @@ def gaps(ctx, T, stations, gauges, chains):
         "stations": len(st), "stations_fresh": len(fresh),
         "stations_stale": [{"k": s["k"], "name": s["name"], "age_h": s["age_h"]} for s in st if s["stale"]][:80],
         "stations_no_bank": [{"k": s["k"], "name": s["name"]} for s in st if s["bank"] is None][:80],
+        "stations_norm_mode": [{"k": s["k"], "name": s["name"], "code": s["code"],
+                                "near_frac": s["norm"].get("near_bank_frac")} for s in st if s.get("norm")],
         "stations_outside_tambons": sum(1 for s in st if not s["tc"]),
         "rain_gauges": len(gauges or []),
         "chain_missing": [r["label"] for c in chains for r in c["stations"] if not r["found"]],
@@ -539,6 +581,15 @@ def main():
 
     fews_thr = ctx.run("fews_thr", "เกณฑ์ระดับน้ำสถานี (สสน. FEWS)", lambda: get_thresholds(ctx)) or {}
     stations = ctx.run("levels", "ระดับน้ำ (คลังข้อมูลน้ำ สสน.)", lambda: get_levels(ctx, idx, fews_thr))
+    norms = (load_json(os.path.join(args.static, "event_analysis.json"), {}) or {}).get("norms", {})
+    st_cfg = cfg["thresholds"]["station"]
+    force_norm = {norm_code(c) for c in st_cfg.get("force_norm_stations", [])}
+    force_bank = {norm_code(c) for c in st_cfg.get("force_bank_stations", [])}
+    for s_ in stations or []:
+        n = norms.get(str(s_["id"]))
+        code = norm_code(s_["code"])
+        use = n and (code in force_norm or (n.get("mode") == "norm" and code not in force_bank))
+        s_["norm"] = n if use else None
     gauges = ctx.run("rain", "ฝน 24 ชม. (คลังข้อมูลน้ำ สสน.)", lambda: get_rain(ctx, idx))
     for g in gauges or []:
         if g["tc"]:

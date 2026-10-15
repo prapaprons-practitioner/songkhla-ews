@@ -152,6 +152,32 @@ def main():
                 rel[i] = round(v - bank, 2)
         peak_i = int((datetime.strptime(r["peak_time"], "%Y-%m-%d %H:%M").replace(tzinfo=ICT) - start).total_seconds() // 3600)
         bench[sid] = {"rel": rel, "peak_i": peak_i, "gap_near_peak": r.get("gap_near_peak", False)}
+    # station norms from the whole archive except the flood window: is the gauge's normal water near its bank?
+    st_cfg = cfg.get("thresholds", {}).get("station", {})
+    near_m = st_cfg.get("near_bank_m", 0.5)
+    frac_lim = st_cfg.get("norm_mode_near_bank_frac", 0.03)
+    norms = {}
+    for sid, m in meta.items():
+        path = os.path.join(args.archive, "levels", f"{sid}.csv")
+        if not m.get("bank_msl") or not os.path.exists(path):
+            continue
+        bank = float(m["bank_msl"])
+        allh = load_series(path, datetime(1900, 1, 1, tzinfo=ICT), datetime(2100, 1, 1, tzinfo=ICT))
+        normal = sorted(v for k, v in allh.items() if not (start <= k < end))
+        if len(normal) < 24 * 60:
+            continue
+        q = lambda p: normal[min(len(normal) - 1, int(p * len(normal)))]  # noqa: E731
+        near = sum(1 for v in normal if bank - v <= near_m) / len(normal)
+        evv = [v for k, v in allh.items() if start <= k < end]
+        norms[sid] = {"p50": round(q(0.5), 2), "p95": round(q(0.95), 2), "p99": round(q(0.99), 2),
+                      "event_peak": round(max(evv), 2) if evv else None, "near_bank_frac": round(near, 3),
+                      "mode": "norm" if near >= frac_lim else "bank", "n_hours": len(normal)}
+    out["norms"] = norms
+    nm = [f"{meta[k]['name']} {meta[k]['code']} ({v['near_bank_frac'] * 100:.0f}%)" for k, v in norms.items() if v["mode"] == "norm"]
+    summary("\n".join(["", f"### สถานีที่ใช้เกณฑ์ระดับปกติแทนตลิ่ง ({len(nm)})", "",
+                        f"น้ำปกติอยู่ห่างตลิ่งไม่เกิน {near_m} ม. นานกว่า {frac_lim * 100:.0f}% ของเวลา (ไม่นับช่วงน้ำท่วม)", ""]
+                       + [f"- {x}" for x in nm]))
+
     bcfg = cfg.get("benchmark", {})
     out["benchmark"] = {"label": bcfg.get("label", "พ.ย. 2568"), "start": start.isoformat(),
                         "activate_below_bank_m": bcfg.get("activate_below_bank_m", 3.0), "stations": bench}
