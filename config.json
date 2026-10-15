@@ -22,7 +22,10 @@
       "eta_watch_h": 24,
       "rise_watch_m_per_h": 0.10,
       "trend_window_h": 3,
-      "use_hii_class": true
+      "use_hii_class": true,
+      "norm_mode_near_bank_frac": 0.03,
+      "force_norm_stations": [],
+      "force_bank_stations": []
     },
     "rain": {
       "next24_watch": 35,
