@@ -534,7 +534,7 @@ function renderStations() {
   const sts = [...(L0?.stations || [])].sort((a, b) => ((b.state ?? -1) - (a.state ?? -1)) || ((a.gap ?? 99) - (b.gap ?? 99)));
   h += `<div class="card"><h3>สถานีวัดระดับน้ำในพื้นที่ (${sts.length})</h3><table class="t"><tr><th>สถานี</th><th>เทียบตลิ่ง</th><th>แนวโน้ม</th><th></th></tr>
     ${sts.map((s) => `<tr class="click" data-tc="${s.tc || ""}"><td>${esc(s.name)}<br><span class="note">${esc(s.code || "")} ${s.tc ? "ต." + esc(S.props[s.tc].t) : ""} · ${ago(s.time)}</span>${analogShort(s) ? `<br><span class="bm-short">${esc(analogShort(s))}</span>` : ""}</td>
-    <td class="n">${s.gap != null ? (s.gap < 0 ? "+" : "−") + fmt(Math.abs(s.gap), 2) + " ม." : "–"}</td>
+    <td class="n">${s.gap != null ? (s.gap < 0 ? "+" : "−") + fmt(Math.abs(s.gap), 2) + " ม." : "–"}${s.norm ? '<br><span class="note">ใช้ระดับปกติ</span>' : ""}</td>
     <td class="n">${s.slope != null ? (s.slope > 0 ? "▲ " : s.slope < 0 ? "▼ " : "") + fmt(Math.abs(s.slope), 2) : "–"}</td>
     <td>${badge(s.state)}</td></tr>`).join("")}</table>
     <p class="note">เทียบตลิ่ง: − ต่ำกว่าตลิ่ง, + สูงกว่าตลิ่ง · แนวโน้ม ม./ชม. คำนวณจาก 3 ชม.ล่าสุด (ระบบต้องเก็บข้อมูลอย่างน้อย 3 รอบก่อน)</p></div>`;
@@ -560,6 +560,7 @@ function renderGaps() {
     <span class="k">สถานีวัดฝน</span><span class="v">${fmt(g.rain_gauges)}</span></div>
     ${g.chain_missing?.length ? `<div class="warnnote">สถานีในห่วงโซ่ที่หาไม่พบ: ${esc(g.chain_missing.join(", "))} — ตรวจรหัสใน config.json</div>` : ""}
     ${g.stations_stale?.length ? `<p class="note"><b>สถานีที่ข้อมูลไม่สด:</b> ${g.stations_stale.map((s) => `${esc(s.name)} (${fmt(s.age_h)} ชม.)`).join(", ")}</p>` : ""}
+    ${g.stations_norm_mode?.length ? `<p class="note"><b>สถานีที่ระดับน้ำปกติอยู่ใกล้ตลิ่ง</b> (ทะเล/ทะเลสาบ/ตลิ่งต่ำ) ระบบเทียบกับระดับสูงปกติของสถานีเองแทนระยะถึงตลิ่ง: ${g.stations_norm_mode.map((s) => `${esc(s.name)} ${esc(s.code)}`).join(", ")}</p>` : ""}
     ${g.stations_no_bank?.length ? `<p class="note"><b>สถานีที่ไม่มีระดับตลิ่ง</b> (คำนวณระยะถึงตลิ่งไม่ได้): ${g.stations_no_bank.map((s) => esc(s.name)).join(", ")}</p>` : ""}</div>`;
   const th = L0.thresholds;
   if (th) h += `<div class="card"><h3>เกณฑ์ที่ใช้คำนวณ (ค่าเริ่มต้น ยังไม่ปรับเทียบ)</h3><table class="t">
