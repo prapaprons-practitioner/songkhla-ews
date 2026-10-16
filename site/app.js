@@ -265,7 +265,7 @@ function benchCard(s) {
   if (r.above) {
     msg = `<div class="warnnote"><b>ระดับน้ำตอนนี้สูงกว่ายอดน้ำ ${lab}</b> (ตอนนี้${relTxt(r.rel)} · ยอดน้ำ ${lab} ${relTxt(r.relPk)})</div>`;
   } else if (r.frac == null) {
-    msg = `<p class="note">ใน ${lab} ระดับน้ำที่สถานีนี้ไม่ได้ขึ้นชัดเจน (อาจเป็นสถานีที่ขึ้นลงตามน้ำทะเลหรือทะเลสาบ) จึงไม่เทียบเวลา</p>`;
+    msg = `<p class="note">ใน ${lab} ระดับน้ำที่สถานีนี้ไม่ได้ขึ้นชัดเจน (อาจเป็นสถานีที่ขึ้นลงตามน้ำทะเล ทะเลสาบ หรือการปล่อยน้ำจากเขื่อน) จึงไม่เทียบเวลา</p>`;
   } else if (!r.active || r.i == null) {
     msg = `<p class="note">ตอนนี้${relTxt(r.rel)}${r.frac != null ? ` (คิดเป็น ${fmt(Math.max(0, r.frac) * 100)}% ของระดับที่น้ำขึ้นใน ${lab})` : ""} ยังไม่ถึงช่วงน้ำขึ้นจริงของเหตุการณ์ ${lab} จึงยังไม่เทียบเวลา · ${lab} ที่สถานีนี้ยอดน้ำ${relTxt(r.relPk)} เมื่อ ${bmTime(r.pk)}</p>`;
   } else {
@@ -560,7 +560,7 @@ function renderGaps() {
     <span class="k">สถานีวัดฝน</span><span class="v">${fmt(g.rain_gauges)}</span></div>
     ${g.chain_missing?.length ? `<div class="warnnote">สถานีในห่วงโซ่ที่หาไม่พบ: ${esc(g.chain_missing.join(", "))} — ตรวจรหัสใน config.json</div>` : ""}
     ${g.stations_stale?.length ? `<p class="note"><b>สถานีที่ข้อมูลไม่สด:</b> ${g.stations_stale.map((s) => `${esc(s.name)} (${fmt(s.age_h)} ชม.)`).join(", ")}</p>` : ""}
-    ${g.stations_norm_mode?.length ? `<p class="note"><b>สถานีที่ระดับน้ำปกติอยู่ใกล้ตลิ่ง</b> (ทะเล/ทะเลสาบ/ตลิ่งต่ำ) ระบบเทียบกับระดับสูงปกติของสถานีเองแทนระยะถึงตลิ่ง: ${g.stations_norm_mode.map((s) => `${esc(s.name)} ${esc(s.code)}`).join(", ")}</p>` : ""}
+    ${g.stations_norm_mode?.length ? `<p class="note"><b>สถานีที่ระดับน้ำปกติอยู่ใกล้ตลิ่งหรือขึ้นลงทุกวัน</b> (น้ำทะเล ทะเลสาบ หรือการปล่อยน้ำจากเขื่อน) ระบบเทียบกับระดับสูงปกติของสถานีเองแทนระยะถึงตลิ่ง: ${g.stations_norm_mode.map((s) => `${esc(s.name)} ${esc(s.code)}`).join(", ")}</p>` : ""}
     ${g.stations_no_bank?.length ? `<p class="note"><b>สถานีที่ไม่มีระดับตลิ่ง</b> (คำนวณระยะถึงตลิ่งไม่ได้): ${g.stations_no_bank.map((s) => esc(s.name)).join(", ")}</p>` : ""}</div>`;
   const th = L0.thresholds;
   if (th) h += `<div class="card"><h3>เกณฑ์ที่ใช้คำนวณ (ค่าเริ่มต้น ยังไม่ปรับเทียบ)</h3><table class="t">
