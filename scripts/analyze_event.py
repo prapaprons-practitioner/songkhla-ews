@@ -156,6 +156,7 @@ def main():
     st_cfg = cfg.get("thresholds", {}).get("station", {})
     near_m = st_cfg.get("near_bank_m", 0.5)
     frac_lim = st_cfg.get("norm_mode_near_bank_frac", 0.03)
+    tide_lim = st_cfg.get("norm_mode_daily_range_m", 0.3)
     norms = {}
     for sid, m in meta.items():
         path = os.path.join(args.archive, "levels", f"{sid}.csv")
@@ -169,13 +170,22 @@ def main():
         q = lambda p: normal[min(len(normal) - 1, int(p * len(normal)))]  # noqa: E731
         near = sum(1 for v in normal if bank - v <= near_m) / len(normal)
         evv = [v for k, v in allh.items() if start <= k < end]
+        # tidal signature: the typical day (median over the year) swings up and down by tens of cm
+        days = {}
+        for k, v in allh.items():
+            if not (start <= k < end):
+                days.setdefault(k.date(), []).append(v)
+        ranges = sorted(max(v) - min(v) for v in days.values() if len(v) >= 20)
+        drange = ranges[len(ranges) // 2] if ranges else 0.0
         norms[sid] = {"p50": round(q(0.5), 2), "p95": round(q(0.95), 2), "p99": round(q(0.99), 2),
                       "event_peak": round(max(evv), 2) if evv else None, "near_bank_frac": round(near, 3),
-                      "mode": "norm" if near >= frac_lim else "bank", "n_hours": len(normal)}
+                      "daily_range": round(drange, 2),
+                      "mode": "norm" if (near >= frac_lim or drange >= tide_lim) else "bank", "n_hours": len(normal)}
     out["norms"] = norms
-    nm = [f"{meta[k]['name']} {meta[k]['code']} ({v['near_bank_frac'] * 100:.0f}%)" for k, v in norms.items() if v["mode"] == "norm"]
+    nm = [f"{meta[k]['name']} {meta[k]['code']} (น้ำใกล้ตลิ่ง {v['near_bank_frac'] * 100:.0f}% ของเวลา · ขึ้นลงวันละ {v['daily_range']:.2f} ม.)"
+          for k, v in norms.items() if v["mode"] == "norm"]
     summary("\n".join(["", f"### สถานีที่ใช้เกณฑ์ระดับปกติแทนตลิ่ง ({len(nm)})", "",
-                        f"น้ำปกติอยู่ห่างตลิ่งไม่เกิน {near_m} ม. นานกว่า {frac_lim * 100:.0f}% ของเวลา (ไม่นับช่วงน้ำท่วม)", ""]
+                        f"น้ำปกติอยู่ห่างตลิ่งไม่เกิน {near_m} ม. นานกว่า {frac_lim * 100:.0f}% ของเวลา หรือขึ้นลงตามน้ำทะเลวันละ {tide_lim} ม. ขึ้นไป (ไม่นับช่วงน้ำท่วม)", ""]
                        + [f"- {x}" for x in nm]))
 
     bcfg = cfg.get("benchmark", {})

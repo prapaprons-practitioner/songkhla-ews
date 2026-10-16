@@ -225,22 +225,28 @@ def slope_m_per_h(points, window_h):
     return None if den == 0 else sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den
 
 
-def norm_levels(n):
-    """Thresholds for gauges whose normal water sits near the bank (lake / tidal / low bank):
-    compare with the gauge's own normal high (p99 of a year without the flood) and the 2025 flood peak."""
+def norm_levels(n, bank=None, near=0.5):
+    """Thresholds for gauges whose level is not well judged by distance to bank: normal water near the
+    bank (lake / low bank) or a daily swing (tide, dam releases). Compare with the gauge's own normal
+    high (p99 of a year without the flood) and the 2025 flood peak. Where the bank is meaningfully
+    above the normal high, overtopping it is still critical and nearing it still a warning."""
     p99, pk = n["p99"], n.get("event_peak")
     span = (pk - p99) if pk is not None and pk - p99 >= 0.3 else 0.9
-    return p99, round(p99 + span / 3, 2), round(p99 + 2 * span / 3, 2)
+    warn, crit = p99 + span / 3, p99 + 2 * span / 3
+    if bank is not None and bank > p99 + 0.1:
+        crit = min(crit, bank)
+        warn = min(warn, max(p99 + 0.05, bank - near))
+    return p99, round(warn, 2), round(crit, 2)
 
 
 def station_state_norm(s, thr):
     n = s["norm"]
-    watch, warn, crit = norm_levels(n)
+    watch, warn, crit = norm_levels(n, s["bank"], thr["near_bank_m"])
     L, sl = s["level"], s.get("slope")
     st = 3 if L >= crit else 2 if L >= warn else 1 if L > watch else 0
     if s["bank"] is not None:
         s["gap"] = round(s["bank"] - L, 2)
-    why = [f"สถานีนี้ระดับน้ำปกติอยู่ใกล้ตลิ่ง (ทะเล/ทะเลสาบ/ตลิ่งต่ำ) จึงเทียบกับระดับของตัวเอง: "
+    why = [f"สถานีนี้ระดับน้ำปกติอยู่ใกล้ตลิ่งหรือขึ้นลงทุกวัน (น้ำทะเล ทะเลสาบ หรือการปล่อยน้ำจากเขื่อน) จึงเทียบกับระดับของตัวเอง: "
            f"ตอนนี้ {L:.2f} ม.รทก. · สูงปกติ {watch:.2f} · เตือนภัย {warn:.2f} · วิกฤต {crit:.2f}"]
     if sl is not None:
         if sl > 0.005:
@@ -269,7 +275,7 @@ def station_state(s, thr, max_age_h, now):
         # a gauge that goes silent while the water is high must not turn "grey"
         # (Nov 2025: X.90 stopped reporting for ~23 h right at the peak)
         if s.get("norm") and s["level"] is not None and s["age_h"] is not None and s["age_h"] <= 24:
-            if s["level"] >= norm_levels(s["norm"])[1]:
+            if s["level"] >= norm_levels(s["norm"], s["bank"], thr["near_bank_m"])[1]:
                 s["state"] = 2
                 s["why"] = f"หยุดส่งข้อมูลขณะน้ำสูง: ค่าล่าสุด {s['level']:.2f} ม.รทก. เมื่อ {s['age_h']:.0f} ชม.ก่อน"
         elif (s["level"] is not None and s["bank"] is not None and s["age_h"] is not None
