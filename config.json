@@ -24,6 +24,7 @@
       "trend_window_h": 3,
       "use_hii_class": true,
       "norm_mode_near_bank_frac": 0.03,
+      "norm_mode_daily_range_m": 0.3,
       "force_norm_stations": [],
       "force_bank_stations": []
     },
