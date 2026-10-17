@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เตือนน้ำท่วมสงขลา</title>
+<meta name="description" content="ต้นแบบระบบเตือนภัยน้ำท่วมล่วงหน้า รายจังหวัด อำเภอ ตำบล และถนน สำหรับสงขลาและจังหวัดที่มีพรมแดนติดกัน">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>เตือนน้ำท่วมล่วงหน้า</h1>
+    <p id="areaName">สงขลาและจังหวัดที่มีพรมแดนติดกัน</p>
+  </div>
+  <div class="status">
+    <span id="updated" class="updated">กำลังโหลด…</span>
+    <span class="pilot" title="คำนวณจากข้อมูลเปิดด้วยเกณฑ์เริ่มต้นที่ยังไม่ได้ปรับเทียบ">ต้นแบบทดลอง · ไม่ใช่ประกาศทางการ</span>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="panel">
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="area" class="on">พื้นที่</button>
+      <button role="tab" data-tab="roads">ถนน</button>
+      <button role="tab" data-tab="stations">สถานีวัดน้ำ</button>
+      <button role="tab" data-tab="gaps">ช่องว่างข้อมูล</button>
+    </nav>
+    <div class="tabbody" id="tab-area"></div>
+    <div class="tabbody hidden" id="tab-roads"></div>
+    <div class="tabbody hidden" id="tab-stations"></div>
+    <div class="tabbody hidden" id="tab-gaps"></div>
+  </section>
+  <section class="mapwrap">
+    <div id="map" aria-label="แผนที่ระดับเตือนภัยรายตำบล"></div>
+  </section>
+</main>
+
+<footer class="foot">
+  ระดับเตือนภัยคำนวณอัตโนมัติจากข้อมูลเปิดของ สสน. (คลังข้อมูลน้ำแห่งชาติ) และฝนพยากรณ์จาก Open-Meteo
+  ใช้ประกอบการเฝ้าระวังเท่านั้น โปรดติดตามประกาศของจังหวัดและ ปภ. (สายด่วน 1784)
+  · ขอบเขตตำบล: OCHA/กรมแผนที่ทหาร · ถนน: © OpenStreetMap
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
