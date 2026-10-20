@@ -4,7 +4,8 @@
 const LV = ["ปกติ", "เฝ้าระวัง", "เตือนภัย", "วิกฤต"];
 const COL = ["#cfe3d4", "#f6d55c", "#f08c2e", "#d7263d"];
 const COLX = "#bdbdbd";
-const SRC_LABEL = { rain: "ฝน", station: "สถานีวัดน้ำ", flashflood: "น้ำป่า", chain: "น้ำจากต้นน้ำ" };
+const SRC_LABEL = { rain: "ฝน", station: "สถานีวัดน้ำ", flashflood: "น้ำป่า", chain: "น้ำจากต้นน้ำ",
+  urban_rain: "ฝนหนักในเมือง", dam: "เขื่อน", hold: "คงระดับรอยืนยัน" };
 const KNOWN_GAPS = [
   ["สถานะประตูระบายน้ำและสถานีสูบน้ำ", "ไม่มีข้อมูลเปิดแบบเรียลไทม์ จึงยังคำนวณความสามารถระบายน้ำจริงไม่ได้", "กรมชลประทาน / เทศบาล"],
   ["ความจุคลองจริง (หลังตะกอนทับถม)", "ใช้ระดับตลิ่งแทน ยังไม่รู้ว่าคลองรับน้ำได้กี่ ลบ.ม./วินาที", "กรมชลประทาน (ข้อมูลรูปตัดคลอง)"],
@@ -12,6 +13,8 @@ const KNOWN_GAPS = [
   ["เกณฑ์ธงสีและจุดธงของหาดใหญ่", "ยังผูกกับระดับน้ำที่สถานีไม่ได้", "มูลนิธิ Hatyai City Climate / เทศบาลนครหาดใหญ่"],
   ["ถนนที่ปิดจริงพร้อมเวลา", "ระดับเตือนภัยของถนนอนุมานจากตำบล ยังไม่ได้ยืนยันกับเหตุการณ์จริง", "กรมทางหลวง (HDMS) / ทางหลวงชนบท"],
   ["ระดับน้ำทะเลสาบสงขลาและน้ำขึ้นน้ำลง", "ยังไม่ได้นำมาคำนวณการระบายลงทะเลสาบ", "กรมอุทกศาสตร์ / สสน. FEWS (ตารางน้ำขึ้นลง)"],
+  ["แผนระบายน้ำเขื่อนบางลางรายวัน/รายชั่วโมง", "มีแค่แผนรายเดือนและปริมาณระบายจริงรายวัน จึงบอกล่วงหน้าไม่ได้ว่าจะเพิ่มการระบายเมื่อไร", "กฟผ. (เขื่อนบางลาง)"],
+  ["ฝนรายชั่วโมงที่แม่นยำ", "ถ้า สสน. ไม่ส่งค่าฝน 1 ชม. ระบบประมาณจากการเพิ่มของฝนสะสม 24 ชม. ซึ่งอาจต่ำกว่าจริง", "สสน. / เทศบาลนครหาดใหญ่ (เครื่องวัดฝนในเมือง)"],
   ["ความลึกน้ำท่วมจริงบนพื้นที่", "ไม่มีเซนเซอร์บนถนนในภาคใต้ ระบบบอกได้แค่ความเสี่ยง ไม่ใช่ความลึก", "เทศบาล / ภาพดาวเทียม GISTDA (ต้องขอ API key)"],
 ];
 
@@ -400,13 +403,47 @@ function rainCard(ac) {
       <span class="k">ฝนพยากรณ์ 24 ชม.ข้างหน้า (เฉลี่ย ${Object.keys(r.models).length} โมเดล)</span><span class="v">${fmt(r.n24)} มม.</span>
       <span class="k">48 / 72 ชม.ข้างหน้า</span><span class="v">${fmt(r.n48)} / ${fmt(r.n72)} มม.</span>
       <span class="k">โมเดลที่คาดฝนมากที่สุด (24 ชม.)</span><span class="v">${fmt(r.n24_max)} มม.</span>
-      <span class="k">ฝนที่ตกแล้ว 24 ชม. ${r.p24_obs != null ? `(สถานีวัดสูงสุด จาก ${r.n_gauges} สถานี)` : "(ประมาณจากโมเดล)"}</span><span class="v">${fmt(r.p24_obs ?? r.p24_model)} มม.</span>
+      <span class="k">ฝนที่ตกแล้ว 24 ชม. ${r.p24_obs != null ? (r.n_gauges >= 3 ? `(สถานีอันดับ 3 จาก ${r.n_gauges} สถานี · สูงสุด ${fmt(r.p24_obs_max ?? r.p24_obs)} มม.)` : `(จาก ${r.n_gauges} สถานี)`) : "(ประมาณจากโมเดล)"}</span><span class="v">${fmt(r.p24_obs ?? r.p24_model)} มม.</span>
       <span class="k">ฝนสะสม (ที่ตกแล้ว + 48 ชม.ข้างหน้า)</span><span class="v">${fmt(r.acc)} มม.</span>
       <span class="k">ความชื้นดิน 3–9 ซม.</span><span class="v">${r.soil != null ? fmt(r.soil, 2) + " ม³/ม³" : "–"}</span>
     </div>
     ${spark(r.h72)}
     <table class="t"><tr><th>โมเดล</th><th>24 ชม.</th><th>48 ชม.</th><th>72 ชม.</th></tr>${models}</table>
-    <div class="note">ฝนพยากรณ์ที่จุดกึ่งกลางอำเภอ ทุกตำบลในอำเภอใช้ค่าเดียวกัน</div></div>`;
+    <div class="note">ฝนพยากรณ์ที่จุดกึ่งกลางอำเภอ ทุกตำบลในอำเภอใช้ค่าเดียวกัน · ฝนที่ตกแล้วใช้สถานีอันดับ 3 เพื่อไม่ให้ฝนหนักเฉพาะจุดเดียวยกทั้งอำเภอ (ฝนหนักเฉพาะจุดในเมืองดูที่การ์ดฝนหนักในเมือง)</div></div>`;
+}
+
+const zoneOf = (tc) => { const p = S.props[tc]; const z = (S.latest?.urban_rain_cfg?.zones || []).find((z) => p && z.amphoe === p.a && z.tambons.includes(p.t)); return z; };
+function urbanCard(name) {
+  const u = (S.latest?.urban_rain || []).find((x) => x.name === name);
+  const c = S.latest?.urban_rain_cfg || {};
+  if (!u) return "";
+  const est = u.src && u.src !== "สสน. 1 ชม.";
+  return `<div class="card"><h3>ฝนหนักใน${esc(u.name)} ${badge(u.lv)}</h3><div class="kv">
+    <span class="k">ฝน 1 ชม. ล่าสุด (สถานีที่มากที่สุด)</span><span class="v">${fmt(u.i1, 1)} มม.${u.g1 ? ` <span class="note">${esc(u.g1)}</span>` : ""}</span>
+    <span class="k">ฝน 3 ชม. ล่าสุด</span><span class="v">${fmt(u.i3, 1)} มม.${u.g3 ? ` <span class="note">${esc(u.g3)}</span>` : ""}</span>
+    <span class="k">สถานีวัดฝนในเขตที่ข้อมูลสด</span><span class="v">${fmt(u.n_gauges)}</span>
+    <span class="k">เกณฑ์ เฝ้าระวัง / เตือนภัย</span><span class="v">1 ชม. ≥${c.watch_1h}/${c.warning_1h} · 3 ชม. ≥${c.watch_3h}/${c.warning_3h} มม.</span></div>
+    <div class="note">${est ? "ค่าประมาณจากการเพิ่มของฝนสะสม 24 ชม. ระหว่างรอบ อาจต่ำกว่าจริง · " : ""}ฝนหนักระยะสั้นทำให้คู คลองระบาย และถนนในเมืองท่วมได้ก่อนคลองสายหลัก (เช่น 14–15 ต.ค. 2569 คลอง 30 เมตรและคลองเรียนขึ้นเร็ว ขณะที่ X.44 แทบไม่ขยับ)</div></div>`;
+}
+
+function damCard(d) {
+  if (!d) return "";
+  const r = d.reservoir || {}, tw = d.tailwater || {}, hii = d.hii || {}, past = d.past || {};
+  const ref = (d.ref_points || [])[0];
+  const pr = past.reservoir, pt = past.tailwater;
+  const relVsPlan = hii.release != null && d.plan_per_day ? hii.release / d.plan_per_day : null;
+  return `<div class="card dam"><h3>${esc(d.name)} ${d.tailwater_state != null ? badge(d.tailwater_state) : '<span class="note">ท้ายเขื่อนข้อมูลไม่สด</span>'}</h3><div class="kv">
+    <span class="k">ระดับอ่าง ${esc(r.code || "")}</span><span class="v">${fmt(r.level, 2)} ม.รทก.${r.slope != null ? ` ${r.slope > 0 ? "▲" : r.slope < 0 ? "▼" : ""} ${fmt(Math.abs(r.slope), 2)} ม./ชม.` : ""} <span class="note">${ago(r.time)}</span></span>
+    ${hii.storage != null ? `<span class="k">น้ำในอ่าง${hii.date ? " " + esc(String(hii.date).slice(5, 10).split("-").reverse().join("/")) : ""}</span><span class="v">${fmt(hii.storage)} ล้าน ลบ.ม.${hii.storage_pct != null ? ` (${fmt(hii.storage_pct, 1)}%)` : ""}</span>` : ""}
+    ${hii.inflow != null ? `<span class="k">ไหลเข้า / ระบาย</span><span class="v">${fmt(hii.inflow, 2)} / ${fmt(hii.release, 2)} ล้าน ลบ.ม./วัน${hii.spill ? ` · ล้นทางระบาย ${fmt(hii.spill, 2)}` : ""}</span>` : ""}
+    ${d.plan_mcm ? `<span class="k">แผนระบายเดือนนี้ (กฟผ.)</span><span class="v">${fmt(d.plan_mcm)} ล้าน ลบ.ม. (เฉลี่ย ${fmt(d.plan_per_day, 2)}/วัน)${relVsPlan != null ? ` · จริง ${fmt(relVsPlan * 100)}% ของแผน` : ""}</span>` : ""}
+    <span class="k">ท้ายเขื่อน ${esc(tw.code || "")}</span><span class="v">${fmt(tw.level, 2)} ม.รทก. <span class="note">${ago(tw.time)}</span></span>
+    ${pr ? `<span class="k">อ่าง พ.ย. 68</span><span class="v">${fmt(pr.start, 2)} → สูงสุด ${fmt(pr.max, 2)} ม. (${esc(pr.max_time)})</span>` : ""}
+    ${pt ? `<span class="k">ท้ายเขื่อน พ.ย. 68</span><span class="v">สูงสุด ${fmt(pt.max, 2)} ม. (${esc(pt.max_time)})</span>` : ""}
+    </div>
+    ${tw.why ? `<div class="note">ท้ายเขื่อน: ${esc(tw.why)}</div>` : ""}
+    ${ref && r.level != null ? `<div class="note">จุดเทียบ: ${esc(ref.note)} ระดับอ่าง ${fmt(ref.level_m, 1)} ม. ≈ ${fmt(ref.storage_mcm)} ล้าน ลบ.ม. — ตอนนี้${Math.abs(r.level - ref.level_m) < 0.5 ? "ใกล้เคียงกัน" : r.level > ref.level_m ? `สูงกว่า ${fmt(r.level - ref.level_m, 1)} ม.` : `ต่ำกว่า ${fmt(ref.level_m - r.level, 1)} ม.`} · ความจุปกติ ${fmt(d.capacity_mcm)} ล้าน ลบ.ม.</div>` : ""}
+    <div class="note">เขื่อนบางลางอยู่ลุ่มน้ำปัตตานี ไม่ไหลมาหาดใหญ่ · มีผลกับอำเภอท้ายน้ำ: ${esc((d.downstream_amphoes || []).join(", "))} · แผน: ${esc(d.plan_source || "")}</div></div>`;
 }
 
 function tambonDetail(tc) {
@@ -424,8 +461,11 @@ function tambonDetail(tc) {
     const bc = sts.map(benchCard).filter(Boolean);
     if (bc.length) { h += bc.join(""); ensureHist(); }
   }
+  const z = zoneOf(tc);
+  if (z) h += urbanCard(z.name);
   h += rainCard(p.ac);
-  if (rgs.length) h += `<div class="card"><h3>สถานีวัดฝนในตำบล</h3><div class="kv">${rgs.map((g) => `<span class="k">${esc(g.name)}</span><span class="v">${fmt(g.r24, 1)} มม. <span class="note">${ago(g.time)}</span></span>`).join("")}</div></div>`;
+  if (rgs.length) h += `<div class="card"><h3>สถานีวัดฝนในตำบล</h3><div class="kv">${rgs.map((g) => `<span class="k">${esc(g.name)}</span><span class="v">${fmt(g.r24, 1)} มม./24 ชม.${g.i1 ? ` · ${fmt(g.i1, 1)} มม./1 ชม.` : ""} <span class="note">${ago(g.time)}</span></span>`).join("")}</div></div>`;
+  for (const d of S.latest?.dams || []) if ((d.downstream_amphoes || []).includes(p.a)) h += damCard(d);
   const ff = S.latest?.flashflood?.[tc];
   if (ff) h += `<div class="card"><h3>รายงานน้ำท่วมฉับพลันของ สสน.</h3><div class="note">${esc(ff.raw)}</div></div>`;
   const rd = roadGroups().filter((g) => g.tcs.has(tc));
@@ -520,7 +560,11 @@ function focusRoad(key) {
 function renderStations() {
   const el = $("#tab-stations");
   const L0 = S.latest;
-  let h = "";
+  const ur = L0?.urban_rain || [];
+  let h = ur.filter((u) => u.lv).map((u) => urbanCard(u.name)).join("");
+  const calm = ur.filter((u) => !u.lv);
+  if (calm.length) h += `<div class="card"><h3>ฝนหนักในเมือง</h3><div class="kv">${calm.map((u) => `<span class="k">${esc(u.name)}</span><span class="v">${fmt(u.i1, 1)} มม./1 ชม. · ${fmt(u.i3, 1)} มม./3 ชม. ${badge(u.lv)}</span>`).join("")}</div></div>`;
+  h += (L0?.dams || []).map(damCard).join("");
   for (const c of L0?.chains || []) {
     h += `<div class="card"><h3>${esc(c.name)} ${c.trigger ? badge(c.trigger.lv) : ""}</h3><div class="chain">`;
     c.stations.forEach((s, i) => {
@@ -567,8 +611,9 @@ function renderGaps() {
     <tr><th>ปัจจัย</th><th>เฝ้าระวัง</th><th>เตือนภัย</th><th>วิกฤต</th></tr>
     <tr><td>ฝนพยากรณ์ 24 ชม. (มม.)</td><td class="n">≥${th.rain.next24_watch}</td><td class="n">≥${th.rain.next24_warning}</td><td class="n">≥${th.rain.next24_critical}</td></tr>
     <tr><td>ฝนสะสม: ตกแล้ว 24 ชม. + 48 ชม.ข้างหน้า (มม.)</td><td class="n">≥${th.rain.acc_watch}</td><td class="n">≥${th.rain.acc_warning}</td><td class="n">≥${th.rain.acc_critical}</td></tr>
+    ${L0.urban_rain_cfg?.watch_1h ? `<tr><td>ฝนหนักในเขตเมือง (สถานีใดสถานีหนึ่งในเขต, มม.)</td><td class="n">1 ชม. ≥${L0.urban_rain_cfg.watch_1h} หรือ 3 ชม. ≥${L0.urban_rain_cfg.watch_3h}</td><td class="n">1 ชม. ≥${L0.urban_rain_cfg.warning_1h} หรือ 3 ชม. ≥${L0.urban_rain_cfg.warning_3h}</td><td>–</td></tr>` : ""}
     <tr><td>ระดับน้ำที่สถานี</td><td>ขึ้นเร็ว ≥${th.station.rise_watch_m_per_h} ม./ชม. หรือถึงตลิ่งใน ≤${th.station.eta_watch_h} ชม.</td><td>ต่ำกว่าตลิ่ง ≤${th.station.near_bank_m} ม. หรือถึงตลิ่งใน ≤${th.station.eta_warning_h} ชม.</td><td>ถึงหรือเกินตลิ่ง</td></tr>
-    </table><p class="note">ดินอิ่มน้ำ (≥${th.soil_wet_m3m3} ม³/ม³) ยกระดับฝนจากเฝ้าระวังเป็นเตือนภัย · พื้นที่ที่ สสน. ระบุเสี่ยงน้ำป่าอยู่ระดับ${LV[th.flashflood_level]}ขึ้นไป · แก้เกณฑ์ได้ใน config.json</p></div>`;
+    </table><p class="note">ดินอิ่มน้ำ (≥${th.soil_wet_m3m3} ม³/ม³) ยกระดับฝนจากเฝ้าระวังเป็นเตือนภัย เฉพาะเมื่อฝนพยากรณ์ 24 ชม. ≥${th.rain.next24_watch} มม. · ฝนที่ตกแล้วใช้สถานีวัดฝนอันดับ 3 ของอำเภอ · ระดับขึ้นได้ทันที แต่ลดลงได้เมื่อค่าต่ำกว่าเดิม 2 รอบติดกัน · ไม่แจ้งเตือนซ้ำตำบลเดิมที่ระดับเดิมภายใน 6 ชม. · พื้นที่ที่ สสน. ระบุเสี่ยงน้ำป่าอยู่ระดับ${LV[th.flashflood_level]}ขึ้นไป · แก้เกณฑ์ได้ใน config.json</p></div>`;
   if (S.event) {
     const ev = S.event;
     h += `<div class="card"><h3>ผลวิเคราะห์เหตุการณ์ ${esc(ev.window[0])} ถึง ${esc(ev.window[1])}</h3>
