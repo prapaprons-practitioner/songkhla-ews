@@ -130,9 +130,100 @@ def get_rain(ctx, idx):
         out.append({
             "k": f"twr:{st.get('id')}", "name": th(st.get("tele_station_name")), "lat": lat, "lon": lon,
             "tc": tam["tc"] if tam else None, "ac": tam["ac"] if tam else None,
-            "r24": fnum(r.get("rain_24h")), "time": iso(parse_local(r.get("rainfall_datetime") or r.get("rain_datetime"))),
+            "r24": fnum(r.get("rain_24h")), "r1": fnum(r.get("rain_1h")),
+            "time": iso(parse_local(r.get("rainfall_datetime") or r.get("rain_datetime"))),
         })
     return out
+
+
+def get_dams(ctx):
+    """HII large-dam table (daily). Field names are discovered at run time; keep numeric fields only."""
+    data = ctx.fetch("tw_dam", ctx.cfg["thaiwater_base"].replace("/public", "/analyst") + "/dam", timeout=120)
+    names = [d["name_match"] for d in ctx.cfg.get("dams", [])]
+    out = {}
+
+    def flat(o, pre=""):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                yield from flat(v, f"{pre}{k}.")
+        elif not isinstance(o, list):
+            yield pre[:-1], o
+
+    def walk(o):
+        if isinstance(o, dict):
+            text = " ".join(str(v) for _, v in flat(o) if isinstance(v, str))
+            hit = next((n for n in names if n in text), None)
+            if hit and any(isinstance(v, (int, float)) for _, v in flat(o)):
+                rec = {k: v for k, v in flat(o) if isinstance(v, (int, float, str)) and len(str(v)) < 40}
+                out.setdefault(hit, rec)
+                return
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(data)
+    return out
+
+
+def dam_fields(rec):
+    """Pick storage %, storage, inflow, release and date out of an unknown record."""
+    pick = {}
+    for k, v in (rec or {}).items():
+        kl = k.lower()
+        if isinstance(v, str) and "date" in kl and "date" not in pick:
+            pick["date"] = v
+        if not isinstance(v, (int, float)):
+            continue
+        if "percent" in kl and "storage" in kl and "uses" not in kl:
+            pick.setdefault("storage_pct", v)
+        elif "storage" in kl and "percent" not in kl and "uses" not in kl and "normal" not in kl and "max" not in kl and "min" not in kl:
+            pick.setdefault("storage", v)
+        elif "inflow" in kl and "percent" not in kl:
+            pick.setdefault("inflow", v)
+        elif "release" in kl and "percent" not in kl:
+            pick.setdefault("release", v)
+        elif "spill" in kl:
+            pick.setdefault("spill", v)
+    return pick
+
+
+def rain_intensity(gauges, prev_rh, now, keep_h=6):
+    """Keep a short rain history per gauge and estimate rain in the last 1 h and 3 h.
+    Uses HII rain_1h when present; otherwise the rise of the rolling 24-h total (a lower bound)."""
+    rh = {k: v for k, v in (prev_rh or {}).items()}
+    for g in gauges or []:
+        if not g["time"] or g["r24"] is None:
+            continue
+        pts = rh.setdefault(g["k"], [])
+        if not pts or pts[-1][0] != g["time"]:
+            pts.append([g["time"], g["r24"], g.get("r1")])
+    cutoff = now - timedelta(hours=keep_h)
+    for k in list(rh):
+        rh[k] = [p for p in rh[k] if (parse_iso(p[0]) or now) >= cutoff]
+        if not rh[k]:
+            del rh[k]
+    for g in gauges or []:
+        pts = rh.get(g["k"], [])
+        t = parse_iso(g["time"]) if g["time"] else None
+        g["i1"] = g["i3"] = None
+        if not t or g["r24"] is None:
+            continue
+
+        def r24_ago(h):
+            cand = [(abs((parse_iso(p[0]) - (t - timedelta(hours=h))).total_seconds()), p[1]) for p in pts if p[1] is not None]
+            cand = [c for c in cand if c[0] <= 40 * 60]
+            return min(cand)[1] if cand else None
+        d1, d3 = r24_ago(1), r24_ago(3)
+        est1 = max(0.0, g["r24"] - d1) if d1 is not None else None
+        est3 = max(0.0, g["r24"] - d3) if d3 is not None else None
+        g["i1"] = g["r1"] if g.get("r1") is not None else est1
+        g["i1_src"] = "สสน. 1 ชม." if g.get("r1") is not None else ("ประมาณจากฝนสะสม" if est1 is not None else None)
+        vals = [v for v in (est3, g["i1"]) if v is not None]
+        g["i3"] = round(max(vals), 1) if vals else None
+        if g["i1"] is not None:
+            g["i1"] = round(g["i1"], 1)
+    return rh
 
 
 def get_forecast(ctx, amphoes, prev_fc):
@@ -363,8 +454,10 @@ def amphoe_rain(fc_a, gauges, now, rthr, soil_wet):
             vals = [x for x in vals if x is not None]
             series.append(round(sum(vals) / len(vals), 1) if vals else None)
         out["h72"] = series
-    fresh = [g["r24"] for g in gauges if g["r24"] is not None]
-    out["p24_obs"] = max(fresh) if fresh else None
+    fresh = sorted((g["r24"] for g in gauges if g["r24"] is not None), reverse=True)
+    # 3rd-highest gauge: one very local downpour should not lift the whole district
+    out["p24_obs"] = fresh[min(2, len(fresh) - 1)] if fresh else None
+    out["p24_obs_max"] = fresh[0] if fresh else None
     out["n_gauges"] = len(fresh)
     soil = None
     st, sv = fc_a.get("soil_times", []), fc_a.get("soil", [])
@@ -390,10 +483,14 @@ def amphoe_rain(fc_a, gauges, now, rthr, soil_wet):
             break
     if out["n24_max"] >= rthr["next24_warning"]:
         lv = max(lv, 1)
-    if lv == 1 and soil is not None and soil >= soil_wet:
+    if lv == 1 and soil is not None and soil >= soil_wet and out["n24"] >= rthr["next24_watch"]:
         lv = 2
         why.append("ดินอิ่มน้ำ")
-    why.insert(0, f"ฝนพยากรณ์ 24 ชม. {out['n24']:.0f} มม. (สูงสุดในบางโมเดล {out['n24_max']:.0f}) · ฝนสะสม 24 ชม.ที่ผ่านมา + 48 ชม.ข้างหน้า {out['acc']:.0f} มม.")
+    obs = ""
+    if out["p24_obs"] is not None:
+        obs = (f" (ฝนที่ผ่านมาใช้ค่าสถานีอันดับ 3 จาก {len(fresh)} สถานี = {out['p24_obs']:.0f} มม. สูงสุด {out['p24_obs_max']:.0f})"
+               if len(fresh) >= 3 else f" (ฝนที่ผ่านมาจากสถานีวัดฝน {out['p24_obs']:.0f} มม.)")
+    why.insert(0, f"ฝนพยากรณ์ 24 ชม. {out['n24']:.0f} มม. (สูงสุดในบางโมเดล {out['n24_max']:.0f}) · ฝนสะสม 24 ชม.ที่ผ่านมา + 48 ชม.ข้างหน้า {out['acc']:.0f} มม.{obs}")
     out["lv"], out["why"] = lv, " · ".join(why)
     return out
 
@@ -406,7 +503,7 @@ def bump(t, lv, src, text):
         t["lv"] = lv
 
 
-def compute(ctx, tam_geo, admin, stations, gauges, fc, ff):
+def compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_tambons=None, dams=None):
     cfg = ctx.cfg
     thr = cfg["thresholds"]
     T = {}
@@ -479,6 +576,42 @@ def compute(ctx, tam_geo, admin, stations, gauges, fc, ff):
                 if p and p["a"] == ch["downstream_amphoe"] and p["t"] in ch["downstream_tambons"]:
                     bump(t, trig["lv"], "chain", f"{ch['name']}: {trig['msg']}")
         chains.append({"name": ch["name"], "stations": rows, "trigger": trig})
+    # heavy rain inside towns: drains and small canals fill long before the main river moves
+    ur = cfg.get("urban_rain", {})
+    urban = []
+    props = {f["properties"]["tc"]: f["properties"] for f in tam_geo["features"]}
+    for z in ur.get("zones", []):
+        ztc = [tc for tc, p in props.items() if p["a"] == z["amphoe"] and p["t"] in z["tambons"]]
+        g = [x for x in gauges or [] if x["tc"] in ztc and x.get("time")
+             and (ctx.now - parse_iso(x["time"])) <= timedelta(minutes=ur.get("max_age_minutes", 90))]
+        g1 = max((x for x in g if x.get("i1") is not None), key=lambda x: x["i1"], default=None)
+        g3 = max((x for x in g if x.get("i3") is not None), key=lambda x: x["i3"], default=None)
+        i1, i3 = (g1 or {}).get("i1") or 0, (g3 or {}).get("i3") or 0
+        lv = 2 if (i1 >= ur["warning_1h"] or i3 >= ur["warning_3h"]) else 1 if (i1 >= ur["watch_1h"] or i3 >= ur["watch_3h"]) else 0
+        row = {"name": z["name"], "lv": lv, "i1": i1, "i3": i3, "n_gauges": len(g),
+               "g1": (g1 or {}).get("name"), "g3": (g3 or {}).get("name"), "src": (g1 or {}).get("i1_src")}
+        urban.append(row)
+        if lv:
+            for tc in ztc:
+                by1 = i1 >= ur["watch_1h"]
+                what = (f"{row['g1']} วัดได้ {i1:.0f} มม. ใน 1 ชม." if by1 else f"{row['g3']} วัดได้ {i3:.0f} มม. ใน 3 ชม.")
+                est = " (ค่าประมาณจากฝนสะสม อาจต่ำกว่าจริง)" if row["src"] != "สสน. 1 ชม." else ""
+                bump(T[tc], lv, "urban_rain", f"ฝนหนักใน{z['name']}: {what}{est} · คู/คลองระบายในเมืองอาจล้นแม้คลองสายหลักยังต่ำ")
+    ctx.urban = urban
+    # dam tailwater above its normal high → downstream districts on watch
+    for d in dams or []:
+        tw = d.get("tailwater_state")
+        if tw and tw >= 1:
+            for tc, p in props.items():
+                if p["a"] in d.get("downstream_amphoes", []):
+                    bump(T[tc], 1, "dam", f"ระดับน้ำท้าย{d['name']}สูงกว่าปกติ อาจเพิ่มการระบายน้ำ")
+    # hysteresis: a level may rise at once but drops only after two lower runs in a row
+    for tc, t in T.items():
+        pv = (prev_tambons or {}).get(tc) or {}
+        plv = pv.get("lv")
+        if t["lv"] is not None and plv is not None and t["lv"] < plv and not pv.get("pending_drop"):
+            t["reasons"].append({"src": "hold", "lv": plv, "text": f"คงระดับ{LEVELS[plv]}ไว้อีก 1 รอบเพื่อยืนยันว่าสถานการณ์ลดลงจริง (ค่าล่าสุดอยู่ระดับ{LEVELS[t['lv']]})"})
+            t["lv"], t["pending_drop"] = plv, True
     # no forecast and no fresh station → "no data" rather than a false "normal"
     fresh_tc = {s["tc"] for s in stations or [] if s.get("state") is not None}
     for tc, t in T.items():
@@ -524,7 +657,7 @@ def gaps(ctx, T, stations, gauges, chains):
     }
 
 
-def make_alerts(ctx, T, prev_latest, tam_props):
+def make_alerts(ctx, T, prev_latest, tam_props, prev_log=None):
     min_lv = ctx.cfg["notify"]["min_level"]
     prev = (prev_latest or {}).get("tambons", {})
     if not prev:  # first run: record a baseline, do not alert on everything at once
@@ -533,6 +666,10 @@ def make_alerts(ctx, T, prev_latest, tam_props):
     for tc, t in T.items():
         before = (prev.get(tc) or {}).get("lv") or 0
         if (t["lv"] or 0) >= min_lv and (t["lv"] or 0) > before:
+            recent = [a for a in (prev_log or []) if a["tc"] == tc and a["to"] >= t["lv"]
+                      and ctx.now - (parse_iso(a["time"]) or ctx.now) < timedelta(hours=6)]
+            if recent:  # already told people about this tambon at this level recently
+                continue
             p = tam_props[tc]
             out.append({"time": iso(ctx.now), "tc": tc, "name": f"ต.{p['t']} อ.{p['a']} จ.{p['p']}", "from": before, "to": t["lv"],
                         "why": t["reasons"][0]["text"] if t["reasons"] else ""})
@@ -563,6 +700,63 @@ def notify(alerts, ctx):
         return "ส่งไม่สำเร็จ"
 
 
+def dam_status(cfg, stations, dam_raw, ev, now):
+    by = {norm_code(s["code"]): s for s in stations if s.get("code")}
+    out = []
+    for d in cfg.get("dams", []):
+        res, tw = by.get(norm_code(d["reservoir"])), by.get(norm_code(d["tailwater"]))
+        month = now.astimezone(ICT).strftime("%Y-%m")
+        plan = (d.get("monthly_plan_mcm") or {}).get(month)
+        days = 31 if month[-2:] in ("01", "03", "05", "07", "08", "10", "12") else 30 if month[-2:] != "02" else 28
+        past = (ev.get("dams") or {}).get(d["reservoir"], {})
+        row = {"name": d["name"], "downstream_amphoes": d.get("downstream_amphoes", []),
+               "capacity_mcm": d.get("capacity_mcm"), "ref_points": d.get("ref_points", []),
+               "plan_month": month, "plan_mcm": plan, "plan_per_day": round(plan / days, 2) if plan else None,
+               "plan_source": d.get("plan_source"),
+               "reservoir": {"code": d["reservoir"], "level": res and res["level"], "time": res and res["time"],
+                             "slope": res and res.get("slope")} if res else None,
+               "tailwater": {"code": d["tailwater"], "level": tw and tw["level"], "time": tw and tw["time"],
+                             "state": tw and tw.get("state"), "why": tw and tw.get("why")} if tw else None,
+               "tailwater_state": tw and tw.get("state"), "past": past,
+               "hii": dam_fields(dam_raw.get(d["name_match"])), "hii_raw_keys": sorted((dam_raw.get(d["name_match"]) or {}).keys())[:40]}
+        out.append(row)
+    return out
+
+
+def write_rain_log(prev_dir, out_dir, gauges, now):
+    """Append rainy readings to a monthly CSV (kept 3 months on the site; the monthly archive job keeps them for good)."""
+    import csv
+    import glob
+    import shutil
+    src, dst = os.path.join(prev_dir, "rain_log"), os.path.join(out_dir, "rain_log")
+    os.makedirs(dst, exist_ok=True)
+    month = now.astimezone(ICT).strftime("%Y-%m")
+    keep = sorted(os.path.basename(p) for p in glob.glob(os.path.join(src, "*.csv")))[-3:]
+    for f in keep:
+        if f != month + ".csv":
+            shutil.copy(os.path.join(src, f), os.path.join(dst, f))
+    path = os.path.join(dst, month + ".csv")
+    seen, rows = set(), []
+    if os.path.exists(os.path.join(src, month + ".csv")):
+        with open(os.path.join(src, month + ".csv"), encoding="utf-8") as f:
+            for r in csv.reader(f):
+                rows.append(r)
+                seen.add((r[0], r[1]))
+    if not rows:
+        rows.append(["time", "k", "name", "tc", "rain_24h", "rain_1h", "est_1h"])
+    for g in gauges:
+        if not g.get("time") or (g.get("r1") or 0) <= 0 and (g.get("i1") or 0) <= 0:
+            continue
+        key = (g["time"], g["k"])
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append([g["time"], g["k"], g["name"], g["tc"] or "", g["r24"], "" if g.get("r1") is None else g["r1"],
+                     "" if g.get("i1") is None else g["i1"]])
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(rows)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config.json")
@@ -584,6 +778,8 @@ def main():
     prev_hist = load_json(os.path.join(args.prev, "history.json"), {})
     prev_fc = load_json(os.path.join(args.prev, "forecast.json"), None)
     prev_alerts = load_json(os.path.join(args.prev, "alerts_log.json"), [])
+    prev_rh = load_json(os.path.join(args.prev, "rain_history.json"), {})
+    ctx.urban = []
 
     fews_thr = ctx.run("fews_thr", "เกณฑ์ระดับน้ำสถานี (สสน. FEWS)", lambda: get_thresholds(ctx)) or {}
     stations = ctx.run("levels", "ระดับน้ำ (คลังข้อมูลน้ำ สสน.)", lambda: get_levels(ctx, idx, fews_thr))
@@ -610,6 +806,11 @@ def main():
     if fc and fc.get("reused"):
         ctx.status["forecast"]["note"] = "ใช้รอบก่อน (ยังไม่ถึงรอบดึงใหม่)"
     ff = ctx.run("flashflood", "พื้นที่เสี่ยงน้ำท่วมฉับพลัน (สสน. FEWS)", lambda: get_flashflood(ctx, tam_geo["features"]))
+    dam_raw = ctx.run("dams", "ข้อมูลเขื่อนรายวัน (สสน.)", lambda: get_dams(ctx)) if cfg.get("dams") else None
+    rh = rain_intensity(gauges or [], prev_rh, ctx.now)
+    if gauges is not None:
+        n1 = sum(1 for g in gauges if g.get("r1") is not None)
+        ctx.status["rain"]["note"] = f"มีค่าฝน 1 ชม. จาก สสน. {n1} สถานี" if n1 else "ไม่มีค่าฝน 1 ชม. จาก สสน. ใช้ค่าประมาณจากฝนสะสม"
 
     if stations is None and prev_latest.get("stations"):
         stations = prev_latest["stations"]
@@ -625,8 +826,9 @@ def main():
         summary("## ❌ ดึงข้อมูลไม่สำเร็จทุกแหล่ง\n\nไม่เขียนทับข้อมูลรอบก่อน หน้าเว็บจะแสดงข้อมูลเดิมพร้อมเวลาที่อัปเดตล่าสุด\n\n" +
                 "\n".join(f"- {v['label']}: {v.get('error', '')}" for v in ctx.status.values()))
         sys.exit(2)
-    T, A, P, chains = compute(ctx, tam_geo, admin, stations, gauges, fc, ff)
-    alerts = make_alerts(ctx, T, prev_latest, tam_props)
+    dams = dam_status(cfg, stations or [], dam_raw or {}, load_json(os.path.join(args.static, "event_analysis.json"), {}) or {}, ctx.now)
+    T, A, P, chains = compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_latest.get("tambons"), dams)
+    alerts = make_alerts(ctx, T, prev_latest, tam_props, prev_alerts)
     sent = notify(alerts, ctx)
     log = (prev_alerts + alerts)[-2000:]
 
@@ -638,6 +840,7 @@ def main():
         "flashflood": ff or {}, "gaps": gaps(ctx, T, stations, gauges, chains),
         "alerts_now": alerts, "notify": sent,
         "forecast_at": (fc or {}).get("fetched_at"),
+        "urban_rain": ctx.urban, "urban_rain_cfg": cfg.get("urban_rain", {}), "dams": dams,
     }
     out = args.out
     save_json(os.path.join(out, "latest.json"), latest)
@@ -646,6 +849,8 @@ def main():
         fc.pop("reused", None)
         save_json(os.path.join(out, "forecast.json"), fc)
     save_json(os.path.join(out, "alerts_log.json"), log)
+    save_json(os.path.join(out, "rain_history.json"), rh)
+    write_rain_log(args.prev, out, gauges or [], ctx.now)
 
     # run summary
     cnt = [0, 0, 0, 0, 0]
@@ -660,6 +865,7 @@ def main():
            f"- สถานีระดับน้ำในพื้นที่ {g['stations']} (ข้อมูลสด {g['stations_fresh']}) · ตำบลที่มีสถานี {g['tambons_with_station']}",
            f"- สถานีวัดฝน {g['rain_gauges']}",
            f"- สถานีในห่วงโซ่ที่หาไม่พบ: {', '.join(g['chain_missing']) or '-'}",
+           "- ฝนหนักในเมือง: " + (" · ".join(f"{u['name']} {u['i1']:.0f} มม./1 ชม. ({LEVELS[u['lv']]})" for u in ctx.urban) or "-"),
            f"- แจ้งเตือน: {sent}"]
     summary("\n".join(md))
 

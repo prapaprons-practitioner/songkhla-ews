@@ -188,6 +188,24 @@ def main():
                         f"น้ำปกติอยู่ห่างตลิ่งไม่เกิน {near_m} ม. นานกว่า {frac_lim * 100:.0f}% ของเวลา หรือขึ้นลงตามน้ำทะเลวันละ {tide_lim} ม. ขึ้นไป (ไม่นับช่วงน้ำท่วม)", ""]
                        + [f"- {x}" for x in nm]))
 
+    # dam reservoir / tailwater during the event, for the dam card ("the last flood started from here")
+    dams = {}
+    for d in cfg.get("dams", []):
+        rec = {}
+        for role in ("reservoir", "tailwater"):
+            sid = next((k for k, m in meta.items() if norm_code(m["code"]) == norm_code(d[role])), None)
+            s = series.get(sid) if sid else None
+            if not s:
+                continue
+            ks = sorted(s)
+            kmax = max(ks, key=lambda k: s[k])
+            rec[role] = {"start": round(s[ks[0]], 2), "start_time": ks[0].strftime("%Y-%m-%d %H:%M"),
+                         "max": round(s[kmax], 2), "max_time": kmax.strftime("%Y-%m-%d %H:%M"),
+                         "min": round(min(s.values()), 2)}
+        if rec:
+            dams[d["reservoir"]] = rec
+    out["dams"] = dams
+
     bcfg = cfg.get("benchmark", {})
     out["benchmark"] = {"label": bcfg.get("label", "พ.ย. 2568"), "start": start.isoformat(),
                         "activate_below_bank_m": bcfg.get("activate_below_bank_m", 3.0), "stations": bench}

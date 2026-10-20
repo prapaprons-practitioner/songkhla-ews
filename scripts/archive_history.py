@@ -26,6 +26,40 @@ def read_csv(path):
     return rows
 
 
+def copy_rain_log(archive):
+    """Copy the monthly rain CSVs the 30-minute job keeps on gh-pages (last 3 months only) into the archive,
+    merging rows so nothing older is lost. Uses the archive checkout's own git remote; no workflow change needed."""
+    import subprocess
+
+    def git(*a):
+        return subprocess.run(["git", "-C", archive, *a], capture_output=True, text=True)
+    if git("fetch", "-q", "--depth", "1", "origin", "gh-pages").returncode != 0:
+        return "ดึงสาขา gh-pages ไม่ได้ (ข้าม)"
+    names = [n for n in git("ls-tree", "--name-only", "FETCH_HEAD", "data/rain_log/").stdout.split() if n.endswith(".csv")]
+    os.makedirs(os.path.join(archive, "rain_log"), exist_ok=True)
+    added = 0
+    for n in names:
+        txt = git("show", f"FETCH_HEAD:{n}").stdout
+        new = list(csv.reader(txt.splitlines()))
+        if not new:
+            continue
+        path = os.path.join(archive, "rain_log", os.path.basename(n))
+        old = []
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                old = list(csv.reader(f))
+        head = (old or new)[0]
+        rows = {(r[0], r[1]): r for r in old[1:] if len(r) > 1}
+        before = len(rows)
+        for r in new[1:]:
+            if len(r) > 1:
+                rows[(r[0], r[1])] = r
+        added += len(rows) - before
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerows([head] + [rows[k] for k in sorted(rows)])
+    return f"คัดลอก {len(names)} ไฟล์ แถวใหม่ {added:,}" if names else "ยังไม่มีไฟล์ใน gh-pages"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="config.json")
@@ -90,8 +124,10 @@ def main():
             w.writerow([s["id"], s["code"], s["name"], s["agency"], s["lat"], s["lon"], s["tc"] or "", p.get("t", ""), p.get("a", ""),
                         p.get("p", ""), s["bank"] if s["bank"] is not None else "", s["warn"] if s["warn"] is not None else "",
                         s["crit"] if s["crit"] is not None else ""])
+    rain_note = copy_rain_log(args.archive)
     summary("\n".join([
         "## เก็บข้อมูลระดับน้ำย้อนหลัง", "",
+        f"- ฝนรายชั่วโมง: {rain_note}",
         f"- สถานีในพื้นที่ {len(stations)} · ดึงสำเร็จ {ok} · ไม่สำเร็จ {len(fail)}",
         f"- แถวข้อมูลใหม่ {new_rows:,} · ช่วงข้อมูลที่มีในคลัง {first} ถึง {last}",
     ] + [f"  - ❌ {x}" for x in fail[:30]]))
