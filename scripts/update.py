@@ -312,7 +312,22 @@ def merge_history(prev_hist, stations, keep_h, now):
     return hist
 
 
+def despike(points, jump=1.0):
+    """Drop single readings that jump away and straight back (sensor glitch), e.g. 26.81 → 20.25 → 26.80.
+    A real rise does not come back to the previous value within the next reading."""
+    pts = [p for p in points if p[1] is not None]
+    keep = []
+    for i, p in enumerate(pts):
+        if 0 < i < len(pts) - 1:
+            a, b = pts[i - 1][1], pts[i + 1][1]
+            if abs(p[1] - a) > jump and abs(p[1] - b) > jump and abs(a - b) < jump / 2:
+                continue
+        keep.append(p)
+    return keep
+
+
 def slope_m_per_h(points, window_h):
+    points = despike(points)
     if len(points) < 3:
         return None
     t_end = parse_iso(points[-1][0])
