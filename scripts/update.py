@@ -140,7 +140,7 @@ def get_dams(ctx):
     """HII large-dam table (daily). Field names are discovered at run time; keep numeric fields only."""
     data = ctx.fetch("tw_dam", ctx.cfg["thaiwater_base"].replace("/public", "/analyst") + "/dam", timeout=120)
     names = [d["name_match"] for d in ctx.cfg.get("dams", [])]
-    out = {}
+    cand = {}
 
     def flat(o, pre=""):
         if isinstance(o, dict):
@@ -149,21 +149,23 @@ def get_dams(ctx):
         elif not isinstance(o, list):
             yield pre[:-1], o
 
-    def walk(o):
+    def walk(o, path=""):
         if isinstance(o, dict):
             text = " ".join(str(v) for _, v in flat(o) if isinstance(v, str))
             hit = next((n for n in names if n in text), None)
             if hit and any(isinstance(v, (int, float)) for _, v in flat(o)):
                 rec = {k: v for k, v in flat(o) if isinstance(v, (int, float, str)) and len(str(v)) < 40}
-                out.setdefault(hit, rec)
+                rec["_path"] = path
+                cand.setdefault(hit, []).append(rec)
                 return
-            for v in o.values():
-                walk(v)
+            for k, v in o.items():
+                walk(v, f"{path}/{k}")
         elif isinstance(o, list):
             for v in o:
-                walk(v)
+                walk(v, path)
     walk(data)
-    return out
+    # the payload has hourly and daily tables; the daily one carries storage %, inflow and release for the whole day
+    return {n: next((r for r in rs if "daily" in r["_path"]), rs[0]) for n, rs in cand.items()}
 
 
 def dam_fields(rec):
@@ -175,7 +177,11 @@ def dam_fields(rec):
             pick["date"] = v
         if not isinstance(v, (int, float)):
             continue
-        if "percent" in kl and "storage" in kl and "uses" not in kl:
+        if kl == "_path":
+            continue
+        if kl.endswith("dam_level"):
+            pick.setdefault("level", v)
+        elif "percent" in kl and "storage" in kl and "uses" not in kl:
             pick.setdefault("storage_pct", v)
         elif "storage" in kl and "percent" not in kl and "uses" not in kl and "normal" not in kl and "max" not in kl and "min" not in kl:
             pick.setdefault("storage", v)
@@ -198,6 +204,7 @@ def rain_intensity(gauges, prev_rh, now, keep_h=6):
         pts = rh.setdefault(g["k"], [])
         if not pts or pts[-1][0] != g["time"]:
             pts.append([g["time"], g["r24"], g.get("r1")])
+        pts.sort(key=lambda p: p[0])
     cutoff = now - timedelta(hours=keep_h)
     for k in list(rh):
         rh[k] = [p for p in rh[k] if (parse_iso(p[0]) or now) >= cutoff]
@@ -219,7 +226,10 @@ def rain_intensity(gauges, prev_rh, now, keep_h=6):
         est3 = max(0.0, g["r24"] - d3) if d3 is not None else None
         g["i1"] = g["r1"] if g.get("r1") is not None else est1
         g["i1_src"] = "สสน. 1 ชม." if g.get("r1") is not None else ("ประมาณจากฝนสะสม" if est1 is not None else None)
-        vals = [v for v in (est3, g["i1"]) if v is not None]
+        # with HII hourly values, 3-h rain = sum of the last three distinct hourly readings
+        hr = {p[0]: p[2] for p in pts if p[2] is not None and t - timedelta(hours=3) < parse_iso(p[0]) <= t}
+        sum3 = sum(hr.values()) if hr else None
+        vals = [v for v in (est3, g["i1"], sum3) if v is not None]
         g["i3"] = round(max(vals), 1) if vals else None
         if g["i1"] is not None:
             g["i1"] = round(g["i1"], 1)
