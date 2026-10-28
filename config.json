@@ -34,7 +34,10 @@
       "next24_critical": 150,
       "acc_watch": 100,
       "acc_warning": 200,
-      "acc_critical": 350
+      "acc_critical": 350,
+      "soil_bump_min_next24": 60,
+      "soil_bump_min_acc": 150,
+      "_soil_note": "ดินอิ่มน้ำยกเฝ้าระวังเป็นเตือนภัยได้เฉพาะเมื่อฝนพยากรณ์ 24 ชม. ถึงค่านี้ หรือฝนสะสมถึงค่านี้ (ปรับ 27 ต.ค. 2569 หลังพบการเตือนถี่ 24–26 ต.ค.)"
     },
     "soil_wet_m3m3": 0.40,
     "flashflood_level": 1
@@ -77,6 +80,13 @@
       "downstream_amphoes": ["บันนังสตา", "เมืองยะลา", "ยะหา", "รามัน", "เมืองปัตตานี", "หนองจิก", "ยะรัง"]
     }
   ],
+
+  "backfill_codes": ["X.173A", "X.90", "X.44", "X.174", "BLGTU05", "BLGTD01"],
+  "daily_audit": true,
+  "rain_check": {
+    "_note": "สถานีที่ฝนหนักแต่สถานีรอบข้างแทบไม่มีฝน ถือว่าค่าน่าสงสัย",
+    "radius_km": 12, "max_neighbour_ratio": 0.2, "min_neighbours": 2, "min_1h": 40, "min_24h": 100
+  },
 
   "notify": {
     "min_level": 2,
