@@ -14,6 +14,8 @@ const KNOWN_GAPS = [
   ["ถนนที่ปิดจริงพร้อมเวลา", "ระดับเตือนภัยของถนนอนุมานจากตำบล ยังไม่ได้ยืนยันกับเหตุการณ์จริง", "กรมทางหลวง (HDMS) / ทางหลวงชนบท"],
   ["ระดับน้ำทะเลสาบสงขลาและน้ำขึ้นน้ำลง", "ยังไม่ได้นำมาคำนวณการระบายลงทะเลสาบ", "กรมอุทกศาสตร์ / สสน. FEWS (ตารางน้ำขึ้นลง)"],
   ["แผนระบายน้ำเขื่อนบางลางรายวัน/รายชั่วโมง", "มีแค่แผนรายเดือนและปริมาณระบายจริงรายวัน จึงบอกล่วงหน้าไม่ได้ว่าจะเพิ่มการระบายเมื่อไร", "กฟผ. (เขื่อนบางลาง)"],
+  ["ระดับน้ำคลองเรียน คลอง 30 เมตร และคลองเตย", "คลองที่ท่วมจริงคืน 20 ต.ค. 2569 ไม่มีสถานีวัดระดับน้ำในคลังข้อมูลน้ำแห่งชาติ ระบบรู้ได้จากฝนเท่านั้น", "เทศบาลนครหาดใหญ่ / เทศบาลเมืองคอหงส์ / กรมชลประทาน"],
+  ["ระดับน้ำกรมชลประทานช่วงเที่ยงคืน", "สถานีกรมชลประทานในภาคใต้ไม่มีข้อมูลราว 23:00–01:00 น. เกือบทุกคืน อย่างน้อยตั้งแต่ปี 2566 ดูตารางความครบถ้วนด้านบน", "กรมชลประทาน (ระบบส่งข้อมูลโทรมาตร) / สสน. / สทนช."],
   ["ฝนรายชั่วโมงที่แม่นยำ", "ถ้า สสน. ไม่ส่งค่าฝน 1 ชม. ระบบประมาณจากการเพิ่มของฝนสะสม 24 ชม. ซึ่งอาจต่ำกว่าจริง", "สสน. / เทศบาลนครหาดใหญ่ (เครื่องวัดฝนในเมือง)"],
   ["ความลึกน้ำท่วมจริงบนพื้นที่", "ไม่มีเซนเซอร์บนถนนในภาคใต้ ระบบบอกได้แค่ความเสี่ยง ไม่ใช่ความลึก", "เทศบาล / ภาพดาวเทียม GISTDA (ต้องขอ API key)"],
 ];
@@ -464,7 +466,7 @@ function tambonDetail(tc) {
   const z = zoneOf(tc);
   if (z) h += urbanCard(z.name);
   h += rainCard(p.ac);
-  if (rgs.length) h += `<div class="card"><h3>สถานีวัดฝนในตำบล</h3><div class="kv">${rgs.map((g) => `<span class="k">${esc(g.name)}</span><span class="v">${fmt(g.r24, 1)} มม./24 ชม.${g.i1 ? ` · ${fmt(g.i1, 1)} มม./1 ชม.` : ""} <span class="note">${ago(g.time)}</span></span>`).join("")}</div></div>`;
+  if (rgs.length) h += `<div class="card"><h3>สถานีวัดฝนในตำบล</h3><div class="kv">${rgs.map((g) => `<span class="k">${esc(g.name)}${g.suspect ? ' <span class="tag-sus">ยังไม่ยืนยัน</span>' : ""}</span><span class="v">${fmt(g.r24, 1)} มม./24 ชม.${g.i1 ? ` · ${fmt(g.i1, 1)} มม./1 ชม.` : ""} <span class="note">${ago(g.time)}</span>${g.suspect ? `<br><span class="note">${esc(g.suspect_why)}</span>` : ""}</span>`).join("")}</div></div>`;
   for (const d of S.latest?.dams || []) if ((d.downstream_amphoes || []).includes(p.a)) h += damCard(d);
   const ff = S.latest?.flashflood?.[tc];
   if (ff) h += `<div class="card"><h3>รายงานน้ำท่วมฉับพลันของ สสน.</h3><div class="note">${esc(ff.raw)}</div></div>`;
@@ -613,7 +615,7 @@ function renderGaps() {
     <tr><td>ฝนสะสม: ตกแล้ว 24 ชม. + 48 ชม.ข้างหน้า (มม.)</td><td class="n">≥${th.rain.acc_watch}</td><td class="n">≥${th.rain.acc_warning}</td><td class="n">≥${th.rain.acc_critical}</td></tr>
     ${L0.urban_rain_cfg?.watch_1h ? `<tr><td>ฝนหนักในเขตเมือง (สถานีใดสถานีหนึ่งในเขต, มม.)</td><td class="n">1 ชม. ≥${L0.urban_rain_cfg.watch_1h} หรือ 3 ชม. ≥${L0.urban_rain_cfg.watch_3h}</td><td class="n">1 ชม. ≥${L0.urban_rain_cfg.warning_1h} หรือ 3 ชม. ≥${L0.urban_rain_cfg.warning_3h}</td><td>–</td></tr>` : ""}
     <tr><td>ระดับน้ำที่สถานี</td><td>ขึ้นเร็ว ≥${th.station.rise_watch_m_per_h} ม./ชม. หรือถึงตลิ่งใน ≤${th.station.eta_watch_h} ชม.</td><td>ต่ำกว่าตลิ่ง ≤${th.station.near_bank_m} ม. หรือถึงตลิ่งใน ≤${th.station.eta_warning_h} ชม.</td><td>ถึงหรือเกินตลิ่ง</td></tr>
-    </table><p class="note">ดินอิ่มน้ำ (≥${th.soil_wet_m3m3} ม³/ม³) ยกระดับฝนจากเฝ้าระวังเป็นเตือนภัย เฉพาะเมื่อฝนพยากรณ์ 24 ชม. ≥${th.rain.next24_watch} มม. · ฝนที่ตกแล้วใช้สถานีวัดฝนอันดับ 3 ของอำเภอ · ระดับขึ้นได้ทันที แต่ลดลงได้เมื่อค่าต่ำกว่าเดิม 2 รอบติดกัน · ไม่แจ้งเตือนซ้ำตำบลเดิมที่ระดับเดิมภายใน 6 ชม. · พื้นที่ที่ สสน. ระบุเสี่ยงน้ำป่าอยู่ระดับ${LV[th.flashflood_level]}ขึ้นไป · แก้เกณฑ์ได้ใน config.json</p></div>`;
+    </table><p class="note">ดินอิ่มน้ำ (≥${th.soil_wet_m3m3} ม³/ม³) ยกระดับฝนจากเฝ้าระวังเป็นเตือนภัย เฉพาะเมื่อฝนพยากรณ์ 24 ชม. ≥${th.rain.soil_bump_min_next24 ?? 60} มม. หรือฝนสะสม ≥${th.rain.soil_bump_min_acc ?? 150} มม. · ฝนที่ตกแล้วใช้สถานีวัดฝนอันดับ 3 ของอำเภอ · ระดับขึ้นได้ทันที แต่ลดลงได้เมื่อค่าต่ำกว่าเดิม 2 รอบติดกัน · ไม่แจ้งเตือนซ้ำตำบลเดิมที่ระดับเดิมภายใน 6 ชม. · พื้นที่ที่ สสน. ระบุเสี่ยงน้ำป่าอยู่ระดับ${LV[th.flashflood_level]}ขึ้นไป · แก้เกณฑ์ได้ใน config.json</p></div>`;
   if (S.event) {
     const ev = S.event;
     h += `<div class="card"><h3>ผลวิเคราะห์เหตุการณ์ ${esc(ev.window[0])} ถึง ${esc(ev.window[1])}</h3>
@@ -624,6 +626,8 @@ function renderGaps() {
   } else {
     h += `<div class="card"><h3>ผลวิเคราะห์เหตุการณ์ในอดีต</h3><div class="note">ยังไม่มี ให้รัน workflow "เก็บข้อมูลย้อนหลังและวิเคราะห์เหตุการณ์" (ควรทำก่อนกลาง พ.ย. 2569 เพื่อเก็บข้อมูลน้ำท่วมปี 2568 ไว้)</div></div>`;
   }
+  h += qualityCard(L0.quality);
+  if (L0.rain_suspect?.length) h += `<div class="card"><h3>สถานีวัดฝนที่ยังไม่มีสถานีข้างเคียงยืนยัน</h3>${L0.rain_suspect.map((g) => `<p class="note"><b>${esc(g.name)}</b>${g.tc && S.props[g.tc] ? ` ต.${esc(S.props[g.tc].t)}` : ""}: ${esc(g.why)}</p>`).join("")}<p class="note">ฝนหนักที่สถานีเดียวขณะที่สถานีรอบข้างแทบไม่มีฝน อาจเป็นฝนเฉพาะจุดจริงหรือเครื่องวัดผิดพลาด ระบบยังไม่นำมาคิดฝนระดับอำเภอ และให้ยกระดับฝนหนักในเมืองได้ไม่เกินเฝ้าระวัง (จึงไม่ส่งแจ้งเตือน) จนกว่าสถานีข้างเคียงจะวัดได้ด้วย</p></div>`;
   h += `<div class="card"><h3>ข้อมูลที่ระบบยังไม่มี</h3><table class="t"><tr><th>ข้อมูล</th><th>ผลต่อระบบ</th><th>ใครมี</th></tr>
     ${KNOWN_GAPS.map(([a, b, c]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td><td>${esc(c)}</td></tr>`).join("")}</table></div>`;
   const log = [...(S.alerts || [])].reverse().slice(0, 40);
@@ -632,6 +636,21 @@ function renderGaps() {
     : '<div class="note">ยังไม่มีการแจ้งเตือน</div>'}</div>`;
   el.innerHTML = h;
   el.querySelectorAll("tr[data-tc]").forEach((tr) => tr.addEventListener("click", () => { const p = S.props[tr.dataset.tc]; if (p) select({ pc: p.pc, ac: p.ac, tc: p.tc }); }));
+}
+
+function qualityCard(q) {
+  if (!q) return `<div class="card"><h3>ความครบถ้วนของข้อมูลรายหน่วยงาน</h3><div class="note">ระบบจะเริ่มตรวจวันละครั้งหลัง 06:00 น. โดยอ่านกราฟของเมื่อวานจากต้นทางทุกสถานี ผลแรกจะขึ้นภายในวันนี้หรือพรุ่งนี้</div></div>`;
+  const short = (n) => ({ "สถาบันสารสนเทศทรัพยากรน้ำ (องค์การมหาชน)": "สสน.", "การไฟฟ้าฝ่ายผลิตแห่งประเทศไทย": "กฟผ.", "มูลนิธิอาสาเพื่อนพึ่ง (ภาฯ) ยามยาก สภากาชาดไทย": "มูลนิธิอาสาเพื่อนพึ่ง (ภาฯ) สภากาชาดไทย" }[n] || n);
+  const row = (a) => `<tr><td>${esc(short(a.agency))}<br><span class="note">${a.stations} สถานี</span></td><td class="n">${fmt(a.complete_pct, 1)}%</td><td class="n">${fmt(a.midnight_pct)}%</td><td class="n">${fmt(a.dead_station_days)}</td></tr>`;
+  const tbl = (rows) => `<table class="t"><tr><th>หน่วยงาน</th><th>มีข้อมูล</th><th>ขาดช่วงเที่ยงคืน</th><th>ดับทั้งวัน</th></tr>${rows.map(row).join("")}</table>`;
+  const worst = (q.d7 || []).flatMap((a) => a.worst.map((w) => ({ ...w, agency: a.agency }))).sort((a, b) => b.missing_h - a.missing_h).slice(0, 10);
+  return `<div class="card"><h3>ความครบถ้วนของข้อมูลรายหน่วยงาน</h3>
+    <p class="note">ตรวจจากกราฟต้นทางบน thaiwater.net วันละครั้ง นับชั่วโมงที่มีค่าระดับน้ำ ไม่ขึ้นกับจังหวะดึงข้อมูลของระบบเรา · มีข้อมูล ${q.n_days} วัน (${esc(q.first_day)} ถึง ${esc(q.last_day)})</p>
+    <p><b>7 วันล่าสุด</b></p>${tbl(q.d7 || [])}
+    ${q.n_days > 7 ? `<p><b>30 วันล่าสุด</b></p>${tbl(q.d30 || [])}` : ""}
+    ${worst.length ? `<p><b>สถานีที่ขาดมากที่สุด (7 วัน)</b></p><table class="t">${worst.map((w) => `<tr><td>${esc(w.name)} ${esc(w.code || "")}<br><span class="note">${esc(short(w.agency))}</span></td><td class="n">${fmt(w.missing_h)} ชม.</td></tr>`).join("")}</table>` : ""}
+    <p class="note">มีข้อมูล = ร้อยละของชั่วโมงที่มีค่า · ขาดช่วงเที่ยงคืน = ร้อยละของสถานี-วันที่ไม่มีค่าเวลา 23:00 หรือ 00:00 น. · ดับทั้งวัน = จำนวนสถานี-วันที่ไม่มีค่าเลย</p>
+    <p class="note">ใช้เป็นหลักฐานประกอบข้อเสนอถึงหน่วยงานได้ พ.ร.บ.ทรัพยากรน้ำ 2561 มาตรา 23 (9) ให้ สทนช. กำกับให้หน่วยงานส่งข้อมูลที่เป็นปัจจุบัน ทั้งในภาวะปกติและภาวะวิกฤติ</p></div>`;
 }
 
 /* ------------------------------------------------------------------ tabs + boot */

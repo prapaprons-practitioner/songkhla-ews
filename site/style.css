@@ -146,3 +146,7 @@ table.t tr.click:hover { background: var(--surface-2); }
 .bm-legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
 .bm-legend .lp { background: var(--ink-3); } .bm-legend .ln { background: var(--accent); }
 .bm-short { font-size: 12px; color: var(--accent); }
+
+.tag-sus{display:inline-block;font-size:11px;padding:0 6px;border-radius:99px;background:#f6d55c;color:#3a2c00;margin-left:4px}
+
+.card{overflow-x:auto}
