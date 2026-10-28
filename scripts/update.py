@@ -236,6 +236,37 @@ def rain_intensity(gauges, prev_rh, now, keep_h=6):
     return rh
 
 
+def km(a_lat, a_lon, b_lat, b_lon):
+    import math
+    dy = (a_lat - b_lat) * 111.0
+    dx = (a_lon - b_lon) * 111.0 * math.cos(math.radians((a_lat + b_lat) / 2))
+    return math.hypot(dx, dy)
+
+
+def flag_suspect_rain(gauges, now, cfg):
+    """A gauge reporting a downpour while every nearby gauge reports almost nothing is more likely
+    a faulty reading than a storm (e.g. 124 mm/h at one Sadao gauge on 21 Oct 2569, neighbours ~0).
+    Real cells are local too, so the bar is strict: ≥2 fresh neighbours within the radius and all of
+    them below the ratio. Suspect gauges stay on the map, flagged, and can raise at most a watch."""
+    c = cfg.get("rain_check", {})
+    radius, ratio, min_n = c.get("radius_km", 12), c.get("max_neighbour_ratio", 0.2), c.get("min_neighbours", 2)
+    fresh = [g for g in gauges if g.get("time") and g.get("lat") is not None and (now - (parse_iso(g["time"]) or now)) <= timedelta(hours=2)]
+    for g in fresh:
+        g["suspect"] = False
+        for key, floor in (("i1", c.get("min_1h", 40)), ("r24", c.get("min_24h", 100))):
+            v = g.get(key)
+            if v is None or v < floor:
+                continue
+            nb = [x.get(key) for x in fresh if x is not g and x.get(key) is not None
+                  and km(g["lat"], g["lon"], x["lat"], x["lon"]) <= radius]
+            if len(nb) >= min_n and max(nb) < ratio * v:
+                g["suspect"] = True
+                g["suspect_why"] = (f"{'ฝน 1 ชม.' if key == 'i1' else 'ฝน 24 ชม.'} {v:.0f} มม. แต่ {len(nb)} สถานีในรัศมี {radius} กม. "
+                                    f"สูงสุดเพียง {max(nb):.0f} มม. ยังไม่มีสถานีข้างเคียงยืนยัน (อาจเป็นฝนเฉพาะจุดหรือเครื่องวัดผิดพลาด)")
+                break
+    return [g for g in gauges if g.get("suspect")]
+
+
 def get_forecast(ctx, amphoes, prev_fc):
     """Open-Meteo hourly rain (3 models) + soil moisture at each amphoe centroid."""
     om = ctx.cfg["open_meteo"]
@@ -508,7 +539,8 @@ def amphoe_rain(fc_a, gauges, now, rthr, soil_wet):
             break
     if out["n24_max"] >= rthr["next24_warning"]:
         lv = max(lv, 1)
-    if lv == 1 and soil is not None and soil >= soil_wet and out["n24"] >= rthr["next24_watch"]:
+    near_warning = out["n24"] >= rthr.get("soil_bump_min_next24", 60) or out["acc"] >= rthr.get("soil_bump_min_acc", 150)
+    if lv == 1 and soil is not None and soil >= soil_wet and near_warning:
         lv = 2
         why.append("ดินอิ่มน้ำ")
     obs = ""
@@ -538,7 +570,7 @@ def compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_tambons=None, da
     # rain per amphoe
     A = {}
     for a in admin["amphoes"]:
-        g = [x for x in (gauges or []) if x["ac"] == a["ac"] and x["r24"] is not None
+        g = [x for x in (gauges or []) if x["ac"] == a["ac"] and x["r24"] is not None and not x.get("suspect")
              and x["time"] and (ctx.now - parse_iso(x["time"])) <= timedelta(hours=cfg["max_age_hours"])]
         fa = (fc or {}).get("amphoes", {}).get(a["ac"], {})
         A[a["ac"]] = {"rain": amphoe_rain(fa, g, ctx.now, thr["rain"], thr["soil_wet_m3m3"])}
@@ -609,10 +641,18 @@ def compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_tambons=None, da
         ztc = [tc for tc, p in props.items() if p["a"] == z["amphoe"] and p["t"] in z["tambons"]]
         g = [x for x in gauges or [] if x["tc"] in ztc and x.get("time")
              and (ctx.now - parse_iso(x["time"])) <= timedelta(minutes=ur.get("max_age_minutes", 90))]
-        g1 = max((x for x in g if x.get("i1") is not None), key=lambda x: x["i1"], default=None)
-        g3 = max((x for x in g if x.get("i3") is not None), key=lambda x: x["i3"], default=None)
-        i1, i3 = (g1 or {}).get("i1") or 0, (g3 or {}).get("i3") or 0
-        lv = 2 if (i1 >= ur["warning_1h"] or i3 >= ur["warning_3h"]) else 1 if (i1 >= ur["watch_1h"] or i3 >= ur["watch_3h"]) else 0
+        def zone_lv(gs):
+            a1 = max((x for x in gs if x.get("i1") is not None), key=lambda x: x["i1"], default=None)
+            a3 = max((x for x in gs if x.get("i3") is not None), key=lambda x: x["i3"], default=None)
+            v1, v3 = (a1 or {}).get("i1") or 0, (a3 or {}).get("i3") or 0
+            lvl = 2 if (v1 >= ur["warning_1h"] or v3 >= ur["warning_3h"]) else 1 if (v1 >= ur["watch_1h"] or v3 >= ur["watch_3h"]) else 0
+            return lvl, a1, a3, v1, v3
+        lv, g1, g3, i1, i3 = zone_lv([x for x in g if not x.get("suspect")])
+        slv, sg1, sg3, si1, si3 = zone_lv(g)
+        suspect_note = ""
+        if slv > lv and lv < 1:  # only a suspect gauge says it is pouring: watch, not warning
+            lv, g1, g3, i1, i3 = 1, sg1, sg3, si1, si3
+            suspect_note = " (สถานีเดียวที่ยังไม่มีสถานีข้างเคียงยืนยัน จึงยกระดับได้ไม่เกินเฝ้าระวัง)"
         row = {"name": z["name"], "lv": lv, "i1": i1, "i3": i3, "n_gauges": len(g),
                "g1": (g1 or {}).get("name"), "g3": (g3 or {}).get("name"), "src": (g1 or {}).get("i1_src")}
         urban.append(row)
@@ -621,7 +661,7 @@ def compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_tambons=None, da
                 by1 = i1 >= ur["watch_1h"]
                 what = (f"{row['g1']} วัดได้ {i1:.0f} มม. ใน 1 ชม." if by1 else f"{row['g3']} วัดได้ {i3:.0f} มม. ใน 3 ชม.")
                 est = " (ค่าประมาณจากฝนสะสม อาจต่ำกว่าจริง)" if row["src"] != "สสน. 1 ชม." else ""
-                bump(T[tc], lv, "urban_rain", f"ฝนหนักใน{z['name']}: {what}{est} · คู/คลองระบายในเมืองอาจล้นแม้คลองสายหลักยังต่ำ")
+                bump(T[tc], lv, "urban_rain", f"ฝนหนักใน{z['name']}: {what}{est}{suspect_note} · คู/คลองระบายในเมืองอาจล้นแม้คลองสายหลักยังต่ำ")
     ctx.urban = urban
     # dam tailwater above its normal high → downstream districts on watch
     for d in dams or []:
@@ -725,6 +765,112 @@ def notify(alerts, ctx):
         return "ส่งไม่สำเร็จ"
 
 
+def graph_points(ctx, sid, day_from, day_to, name):
+    url = (f"{ctx.cfg['thaiwater_base']}/waterlevel_graph?station_type=tele_waterlevel&station_id={sid}"
+           f"&start_date={day_from:%Y-%m-%d}&end_date={day_to:%Y-%m-%d}%2023:59")
+    data = ctx.fetch(name, url, timeout=60)
+    out = []
+    for p in find_records(data, "datetime") or find_records(data, "value"):
+        t, v = parse_local(p.get("datetime") or p.get("date")), fnum(p.get("value"))
+        if t is not None and v is not None:
+            out.append((t, v))
+    return out
+
+
+def backfill_history(ctx, hist, stations):
+    """Agencies that upload night readings in batches only show their latest value in the 'latest' feed,
+    so hours in between never reach our history. Re-read the last 24 h graph of the key stations."""
+    codes = {norm_code(c) for c in ctx.cfg.get("backfill_codes", [])}
+    now_l = ctx.now.astimezone(ICT)
+    added, n = 0, 0
+    for s in stations:
+        if not s.get("id") or norm_code(s.get("code")) not in codes:
+            continue
+        pts = graph_points(ctx, s["id"], now_l - timedelta(days=1), now_l, f"graph24_{s['id']}")
+        if not pts:
+            continue
+        # sanity: the graph's latest reading must agree with the live value
+        last = max(pts)
+        if s.get("level") is not None and abs(last[1] - s["level"]) > 0.3:
+            continue
+        have = {p[0] for p in hist.get(s["k"], [])}
+        cutoff = ctx.now - timedelta(hours=ctx.cfg["history_hours"])
+        for t, v in pts:
+            k = iso(t)
+            if k not in have and t >= cutoff:
+                hist.setdefault(s["k"], []).append([k, v]); added += 1
+        hist[s["k"]] = sorted(hist.get(s["k"], []), key=lambda p: p[0])
+        n += 1
+    return {"stations": n, "added": added}
+
+
+def daily_audit(ctx, stations, q, per_run=30):
+    """Once a day, read yesterday's full graph of every station straight from the source and count
+    the hours that have a reading. This measures the agency's data, not our collection timing.
+    Spread over several runs (per_run stations each) so one slow server cannot stall the update."""
+    import time
+    q = q or {"days": {}, "stations": {}}
+    q.setdefault("partial", {})
+    now_l = ctx.now.astimezone(ICT)
+    day = (now_l - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    key = day.strftime("%Y-%m-%d")
+    if key in q["days"] or now_l.hour < 6:
+        return q, False
+    for k in list(q["partial"]):
+        if k != key:
+            del q["partial"][k]
+    rec = q["partial"].setdefault(key, {})
+    todo = [s for s in stations if s.get("id") and s["k"] not in rec]
+    t0 = time.time()
+    for s in todo[:per_run]:
+        if time.time() - t0 > 240:
+            break
+        try:
+            pts = graph_points(ctx, s["id"], day, day, f"graphday_{s['id']}")
+        except Exception:  # noqa: BLE001
+            continue  # retried next run
+        hrs = {t.astimezone(ICT).hour for t, _ in pts if t.astimezone(ICT).date() == day.date()}
+        rec[s["k"]] = {"h": len(hrs), "miss": [h for h in range(24) if h not in hrs]}
+        q["stations"][s["k"]] = {"code": s.get("code"), "name": (s.get("name") or "").strip(), "agency": (s.get("agency") or "").strip()}
+        if not ctx.fixtures:
+            time.sleep(0.3)
+    if all(s["k"] in rec for s in stations if s.get("id")):
+        q["days"][key] = q["partial"].pop(key)
+        for k in sorted(q["days"])[:-400]:
+            del q["days"][k]
+        return q, True
+    return q, False
+
+
+def quality_summary(q):
+    days = sorted((q or {}).get("days", {}))
+    if not days:
+        return None
+    meta = q["stations"]
+
+    def agg(sel):
+        by = {}
+        for d in sel:
+            for k, r in q["days"][d].items():
+                ag = (meta.get(k) or {}).get("agency") or "ไม่ระบุ"
+                a = by.setdefault(ag, {"agency": ag, "sd": 0, "hours": 0, "midnight": 0, "dead": 0, "st": set(), "worst": {}})
+                a["sd"] += 1; a["hours"] += r["h"]; a["st"].add(k)
+                if 23 in r["miss"] or 0 in r["miss"]:
+                    a["midnight"] += 1
+                if r["h"] == 0:
+                    a["dead"] += 1
+                a["worst"][k] = a["worst"].get(k, 0) + (24 - r["h"])
+        out = []
+        for a in by.values():
+            worst = sorted(a["worst"].items(), key=lambda kv: -kv[1])[:5]
+            out.append({"agency": a["agency"], "stations": len(a["st"]), "complete_pct": round(100 * a["hours"] / (24 * a["sd"]), 1),
+                        "midnight_pct": round(100 * a["midnight"] / a["sd"], 1), "dead_station_days": a["dead"],
+                        "worst": [{"k": k, "code": meta[k]["code"], "name": meta[k]["name"], "missing_h": m} for k, m in worst if m]})
+        return sorted(out, key=lambda x: x["complete_pct"])
+    return {"first_day": days[0], "last_day": days[-1], "n_days": len(days),
+            "d7": agg(days[-7:]), "d30": agg(days[-30:]), "yesterday": agg(days[-1:])}
+
+
 def dam_status(cfg, stations, dam_raw, ev, now):
     by = {norm_code(s["code"]): s for s in stations if s.get("code")}
     out = []
@@ -804,6 +950,7 @@ def main():
     prev_fc = load_json(os.path.join(args.prev, "forecast.json"), None)
     prev_alerts = load_json(os.path.join(args.prev, "alerts_log.json"), [])
     prev_rh = load_json(os.path.join(args.prev, "rain_history.json"), {})
+    prev_q = load_json(os.path.join(args.prev, "quality_log.json"), None)
     ctx.urban = []
 
     fews_thr = ctx.run("fews_thr", "เกณฑ์ระดับน้ำสถานี (สสน. FEWS)", lambda: get_thresholds(ctx)) or {}
@@ -833,6 +980,7 @@ def main():
     ff = ctx.run("flashflood", "พื้นที่เสี่ยงน้ำท่วมฉับพลัน (สสน. FEWS)", lambda: get_flashflood(ctx, tam_geo["features"]))
     dam_raw = ctx.run("dams", "ข้อมูลเขื่อนรายวัน (สสน.)", lambda: get_dams(ctx)) if cfg.get("dams") else None
     rh = rain_intensity(gauges or [], prev_rh, ctx.now)
+    suspects = flag_suspect_rain(gauges or [], ctx.now, cfg)
     if gauges is not None:
         n1 = sum(1 for g in gauges if g.get("r1") is not None)
         ctx.status["rain"]["note"] = f"มีค่าฝน 1 ชม. จาก สสน. {n1} สถานี" if n1 else "ไม่มีค่าฝน 1 ชม. จาก สสน. ใช้ค่าประมาณจากฝนสะสม"
@@ -841,6 +989,11 @@ def main():
         stations = prev_latest["stations"]
         ctx.status["levels"]["note"] = "ใช้ข้อมูลรอบก่อน"
     hist = merge_history(prev_hist, stations or [], cfg["history_hours"], ctx.now)
+    if stations and cfg.get("backfill_codes"):
+        bf = ctx.run("backfill", "เติมข้อมูลย้อนหลัง 24 ชม. สถานีหลัก (สสน.)", lambda: backfill_history(ctx, hist, stations))
+        if bf:
+            ctx.status["backfill"].update(n=bf["stations"], note=f"เติมค่าที่ขาด {bf['added']} ค่า")
+    qlog, audited = (daily_audit(ctx, stations or [], prev_q) if stations and cfg.get("daily_audit", True) else (prev_q, False))
     for s in stations or []:
         s["slope"] = slope_m_per_h(hist.get(s["k"], []), cfg["thresholds"]["station"]["trend_window_h"])
         if s["slope"] is not None:
@@ -866,6 +1019,7 @@ def main():
         "alerts_now": alerts, "notify": sent,
         "forecast_at": (fc or {}).get("fetched_at"),
         "urban_rain": ctx.urban, "urban_rain_cfg": cfg.get("urban_rain", {}), "dams": dams,
+        "quality": quality_summary(qlog), "rain_suspect": [{"k": g["k"], "name": g["name"], "tc": g["tc"], "why": g["suspect_why"]} for g in suspects],
     }
     out = args.out
     save_json(os.path.join(out, "latest.json"), latest)
@@ -875,6 +1029,8 @@ def main():
         save_json(os.path.join(out, "forecast.json"), fc)
     save_json(os.path.join(out, "alerts_log.json"), log)
     save_json(os.path.join(out, "rain_history.json"), rh)
+    if qlog:
+        save_json(os.path.join(out, "quality_log.json"), qlog)
     write_rain_log(args.prev, out, gauges or [], ctx.now)
 
     # run summary
@@ -891,6 +1047,8 @@ def main():
            f"- สถานีวัดฝน {g['rain_gauges']}",
            f"- สถานีในห่วงโซ่ที่หาไม่พบ: {', '.join(g['chain_missing']) or '-'}",
            "- ฝนหนักในเมือง: " + (" · ".join(f"{u['name']} {u['i1']:.0f} มม./1 ชม. ({LEVELS[u['lv']]})" for u in ctx.urban) or "-"),
+           "- สถานีวัดฝนที่ยังไม่มีสถานีข้างเคียงยืนยัน: " + (", ".join(g["name"] for g in suspects) or "-"),
+           "- ตรวจความครบถ้วนข้อมูลรายวัน: " + ("ครบทุกสถานีสำหรับเมื่อวานแล้ว" if audited else "ตรวจของเมื่อวานครบแล้ว" if (ctx.now.astimezone(ICT) - timedelta(days=1)).strftime('%Y-%m-%d') in (qlog or {}).get("days", {}) else f"รอบนี้ตรวจไปแล้ว {len(((qlog or {}).get('partial') or {}).get(((ctx.now.astimezone(ICT) - timedelta(days=1)).strftime('%Y-%m-%d')), {}))} สถานี (ทำวันละครั้งหลัง 06:00 น. แบ่งหลายรอบ)"),
            f"- แจ้งเตือน: {sent}"]
     summary("\n".join(md))
 
