@@ -355,18 +355,21 @@ function renderArea() {
     const a = S.admin.amphoes.find((x) => x.ac === S.sel.ac);
     const n = tamCounts((p) => p.ac === a.ac);
     html += hero(`อ.${a.a}`, `จ.${a.p}`, L0?.amphoes?.[a.ac]?.lv, n);
+    html += stormCard((x) => x.ac === a.ac);
     html += rainCard(a.ac);
     html += childList(Object.values(S.props).filter((p) => p.ac === a.ac).map((p) => ({ key: p.tc, attr: "tc", name: "ต." + p.t, lv: lvOf(p.tc), meta: (L0?.tambons?.[p.tc]?.reasons?.[0]?.text || "ไม่พบปัจจัยเสี่ยง").slice(0, 90) })));
   } else if (S.sel.pc) {
     const p = S.admin.provinces.find((x) => x.pc === S.sel.pc);
     const n = tamCounts((x) => x.pc === p.pc);
     html += hero(`จ.${p.p}`, `${n.reduce((a, b) => a + b)} ตำบล`, L0?.provinces?.[p.pc]?.lv, n);
+    html += stormCard((x) => x.pc === p.pc);
     html += childList(S.admin.amphoes.filter((a) => a.pc === p.pc).map((a) => {
       const c = tamCounts((x) => x.ac === a.ac);
       return { key: a.ac, attr: "ac", name: "อ." + a.a, lv: L0?.amphoes?.[a.ac]?.lv, meta: countsText(c), n: c };
     }));
   } else {
     const n = tamCounts(() => true);
+    html += stormCard(() => true).replace('<div class="card storm">', '<div class="card storm" id="storm-top">');
     html += hero(L0?.area_name || "ทุกจังหวัด", `${Object.keys(S.props).length} ตำบล · ${S.admin.amphoes.length} อำเภอ`, Math.max(...Object.values(L0?.provinces || {}).map((p) => p.lv ?? 0), 0), n);
     html += childList(S.admin.provinces.map((p) => {
       const c = tamCounts((x) => x.pc === p.pc);
@@ -380,6 +383,42 @@ function renderArea() {
   }
   el.innerHTML = html;
   bindArea(el);
+}
+
+const thDate = (d) => d ? new Date(d + "T12:00:00+07:00").toLocaleDateString("th-TH", { day: "numeric", month: "short", timeZone: "Asia/Bangkok" }) : "";
+function stormCard(filter) {
+  const sr = S.latest?.storm_risk;
+  if (!sr) return "";
+  const am = (S.admin?.amphoes || []).filter(filter).map((a) => ({ ...a, r: sr.amphoes?.[a.ac] })).filter((a) => a.r);
+  const flagged = am.filter((a) => a.r.flag).sort((a, b) => b.r.cape - a.r.cape);
+  if (!flagged.length && am.length > 1) return "";
+  const one = am.length === 1 ? am[0] : null;
+  const head = `<h3>วันเสี่ยงฝนฟ้าคะนองรุนแรง ${thDate(sr.date)} <span class="tag-exp">ทดลอง</span></h3>`;
+  const body = one
+    ? `<div class="kv"><span class="k">CAPE สูงสุดช่วง ${sr.window[0]}:00–${sr.window[1]}:59 น.</span><span class="v">${fmt(one.r.cape)} J/kg <span class="note">${esc(one.r.time)} น.</span>${one.r.flag ? ' <span class="tag-storm">เสี่ยง</span>' : ""}</span></div>`
+    : `<ul class="list">${flagged.map((a) => `<li data-ac="${a.ac}"><span class="dot" style="background:var(--storm, #7b5cd6)"></span><div><div class="nm">อ.${esc(a.a)} <span class="meta">จ.${esc(a.p)}</span></div><div class="meta">CAPE ${fmt(a.r.cape)} J/kg ช่วง ${esc(a.r.time)} น.</div></div></li>`).join("")}</ul>`;
+  return `<div class="card storm">${head}${body}
+    <p class="note">บรรยากาศพร้อมเกิดฝนฟ้าคะนองรุนแรง (CAPE ≥ ${fmt(sr.threshold)} J/kg) บอกได้แค่ว่าเป็น "วันเสี่ยง" ไม่ได้บอกเวลาหรือจุดที่ฝนจะตก ใช้เป็นสัญญาณให้ยกของที่ยกง่ายขึ้นที่สูงไว้ก่อน · ทดสอบย้อนหลังที่หาดใหญ่ 14 ต.ค.–2 พ.ย. 2569 จับวันฝนหนักได้ 3 ใน 5 วัน และเตือนผิด 2 วันจาก 16 วัน · ยังไม่ส่งแจ้งเตือนและไม่ยกระดับตำบล</p></div>`;
+}
+
+function stormScoreCard() {
+  const sr = S.latest?.storm_risk;
+  if (!sr) return "";
+  const sc = (x) => `จับได้ ${x.hit} · พลาด ${x.miss} · เตือนผิด ${x.false_alarm} · วันเงียบถูก ${x.quiet} <span class="note">(${x.days} อำเภอ-วัน)</span>`;
+  const names = Object.fromEntries((S.admin?.amphoes || []).map((a) => [a.ac, a.a]));
+  const days = Object.keys(sr.recent || {}).sort().reverse();
+  const rows = days.flatMap((d) => Object.entries(sr.recent[d]).map(([ac, e]) => ({ d, ac, e }))).filter((r) => r.e.issued);
+  const verdict = (e, d) => {
+    const today = new Date(S.latest?.generated_at || Date.now()).toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" });
+    if (d >= today) return '<span class="note">ยังไม่จบวัน</span>';
+    const hv = (e.obs_max || 0) >= sr.heavy_mm_h;
+    return e.flag && hv ? '<span class="dn">จับได้</span>' : hv ? '<span class="up">พลาด</span>' : e.flag ? '<span class="up">เตือนผิด</span>' : '<span class="note">เงียบถูก</span>';
+  };
+  return `<div class="card"><h3>ผลของ "วันเสี่ยงฝนฟ้าคะนองรุนแรง" (ทดลอง)</h3>
+    <div class="kv"><span class="k">${(sr.focus || []).map((a) => "อ." + (names[a] || a)).join(" / ")}</span><span class="v">${sc(sr.score_focus)}</span>
+    <span class="k">ทุกอำเภอ (31 วันล่าสุด)</span><span class="v">${sc(sr.score_all)}</span></div>
+    ${rows.length ? `<table class="t"><tr><th>วันที่</th><th>อำเภอ</th><th>CAPE ตอนเช้า</th><th>ฝนจริงสูงสุด</th><th>ผล</th></tr>${rows.map(({ d, ac, e }) => `<tr><td>${thDate(d)}</td><td>${esc(names[ac] || ac)}</td><td class="n">${fmt(e.cape)}${e.flag ? " ⚠" : ""}</td><td class="n">${e.obs_max != null ? fmt(e.obs_max, 1) + " มม./ชม." : "–"}${e.obs_time ? ` <span class="note">${esc(e.obs_time)}</span>` : ""}</td><td>${verdict(e, d)}</td></tr>`).join("")}</table>` : '<p class="note">เริ่มบันทึกตั้งแต่เช้าพรุ่งนี้ ระบบตัดสินว่าเป็นวันเสี่ยงหรือไม่จากรอบอัปเดตแรกก่อน 10:00 น. แล้วล็อกไว้ เพื่อตรวจกับฝนที่ตกจริงทั้งวันอย่างยุติธรรม</p>'}
+    <p class="note">ฝนหนัก = มีสถานีในอำเภอวัดได้ ≥ ${sr.heavy_mm_h} มม./ชม. · จะตัดสินว่าควรเปิดส่งแจ้งเตือนหรือไม่หลังสะสมผลช่วงมรสุมพฤศจิกายน</p></div>`;
 }
 
 function hero(title, sub, lv, n) {
@@ -633,6 +672,7 @@ function renderGaps() {
   h += `<div class="card"><h3>ข้อมูลที่ระบบยังไม่มี</h3><table class="t"><tr><th>ข้อมูล</th><th>ผลต่อระบบ</th><th>ใครมี</th></tr>
     ${KNOWN_GAPS.map(([a, b, c]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td><td>${esc(c)}</td></tr>`).join("")}</table></div>`;
   const log = [...(S.alerts || [])].reverse().slice(0, 40);
+  h += stormScoreCard();
   const lagRows = [...(S.alerts || [])].filter((a) => a.lag_min != null).reverse();
   const seen = new Set(), lag = lagRows.filter((a) => { const k = a.time; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 12);
   h += `<div class="card"><h3>ความเร็วของการเตือนฝนหนักในเมือง</h3>${lag.length

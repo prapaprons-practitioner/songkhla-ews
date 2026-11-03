@@ -150,3 +150,8 @@ table.t tr.click:hover { background: var(--surface-2); }
 .tag-sus{display:inline-block;font-size:11px;padding:0 6px;border-radius:99px;background:#f6d55c;color:#3a2c00;margin-left:4px}
 
 .card{overflow-x:auto}
+
+.card.storm{border-left:4px solid #7b5cd6}
+.tag-exp{display:inline-block;font-size:11px;padding:0 6px;border-radius:99px;background:#ece7fb;color:#4a3596;margin-left:4px;font-weight:500}
+.tag-storm{display:inline-block;font-size:11px;padding:0 6px;border-radius:99px;background:#7b5cd6;color:#fff}
+.up{color:#b3261e;font-weight:600}.dn{color:#0d6c78;font-weight:600}
