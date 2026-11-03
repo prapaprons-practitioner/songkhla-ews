@@ -26,7 +26,8 @@ jobs:
       - name: ดึงบันทึกฝนรายชั่วโมงจากสาขา gh-pages
         run: |
           mkdir -p pages
-          git fetch --depth 1 origin gh-pages && git --work-tree=pages checkout origin/gh-pages -- data
+          git fetch --depth 1 origin gh-pages
+          git archive origin/gh-pages data | tar -x -C pages   # copy files only, leave the main branch index clean
 
       - name: ทดสอบย้อนหลัง
         run: python3 scripts/backtest_forecast.py --config config.json --static site/data/static --rain-log pages/data/rain_log --latest pages/data/latest.json --start "${{ github.event.inputs.start || '2026-09-01' }}"
@@ -37,4 +38,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add site/data/static/forecast_backtest.json
           git commit -m "ผลทดสอบพยากรณ์ฝนล่วงหน้า" || echo "ผลไม่เปลี่ยน"
-          git pull -q --rebase && git push
+          git pull -q --rebase origin main && git push origin HEAD:main
