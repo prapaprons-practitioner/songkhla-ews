@@ -425,7 +425,9 @@ function urbanCard(name) {
     <span class="k">ฝน 3 ชม. ล่าสุด</span><span class="v">${fmt(u.i3, 1)} มม.${u.g3 ? ` <span class="note">${esc(u.g3)}</span>` : ""}</span>
     <span class="k">สถานีวัดฝนในเขตที่ข้อมูลสด</span><span class="v">${fmt(u.n_gauges)}</span>
     <span class="k">เกณฑ์ เฝ้าระวัง / เตือนภัย</span><span class="v">1 ชม. ≥${c.watch_1h}/${c.warning_1h} · 3 ชม. ≥${c.watch_3h}/${c.warning_3h} มม.</span></div>
-    <div class="note">${est ? "ค่าประมาณจากการเพิ่มของฝนสะสม 24 ชม. ระหว่างรอบ อาจต่ำกว่าจริง · " : ""}ฝนหนักระยะสั้นทำให้คู คลองระบาย และถนนในเมืองท่วมได้ก่อนคลองสายหลัก (เช่น 14–15 ต.ค. 2569 คลอง 30 เมตรและคลองเรียนขึ้นเร็ว ขณะที่ X.44 แทบไม่ขยับ)</div></div>`;
+    ${u.data_time ? `<div class="note">เวลาที่สถานีบันทึก: ${timeTH(u.data_time)} (สิ้นสุดชั่วโมงที่วัดฝน)</div>` : ""}
+    ${(u.cameras || []).length ? `<p class="note"><b>ดูสภาพคลองจริง:</b> ${u.cameras.map((c) => `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.name)}</a> <span class="note">(${esc(c.credit || "")})</span>`).join(" · ")}</p>` : ""}
+    <div class="note">${est ? "ค่าประมาณจากการเพิ่มของฝนสะสม 24 ชม. ระหว่างรอบ อาจต่ำกว่าจริง · " : ""}ฝนหนักระยะสั้นทำให้คู คลองระบาย และถนนในเมืองท่วมได้ก่อนคลองสายหลัก (20 ต.ค. 2569 ฝนหนักฝั่งคอหงส์ คลอง 30 เมตรเกือบล้น · 28 ต.ค. ฝนหนักพอกันแต่ตกกลางเมือง คลองยังอยู่ระดับปกติ)</div></div>`;
 }
 
 function damCard(d) {
@@ -631,6 +633,12 @@ function renderGaps() {
   h += `<div class="card"><h3>ข้อมูลที่ระบบยังไม่มี</h3><table class="t"><tr><th>ข้อมูล</th><th>ผลต่อระบบ</th><th>ใครมี</th></tr>
     ${KNOWN_GAPS.map(([a, b, c]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td><td>${esc(c)}</td></tr>`).join("")}</table></div>`;
   const log = [...(S.alerts || [])].reverse().slice(0, 40);
+  const lagRows = [...(S.alerts || [])].filter((a) => a.lag_min != null).reverse();
+  const seen = new Set(), lag = lagRows.filter((a) => { const k = a.time; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 12);
+  h += `<div class="card"><h3>ความเร็วของการเตือนฝนหนักในเมือง</h3>${lag.length
+    ? `<table class="t"><tr><th>เวลาที่ระบบเตือน</th><th>เวลาที่สถานีบันทึกฝน</th><th>ช้ากว่าข้อมูล</th></tr>${lag.map((a) => `<tr><td>${timeTH(a.time)}</td><td>${timeTH(a.data_time)}</td><td class="n">${fmt(a.lag_min)} นาที</td></tr>`).join("")}</table>
+       <p class="note">นับจากเวลาที่สถานีบันทึกฝน (สิ้นสุดชั่วโมงที่วัด) ถึงเวลาที่ระบบเตือน ยิ่งน้อยยิ่งดี น้ำในคลองกลางเมืองเริ่มขึ้นได้ภายในไม่กี่นาทีหลังฝนหนัก จึงควรต่ำกว่า 30 นาที</p>`
+    : '<div class="note">ยังไม่มีการเตือนฝนหนักในเมืองหลังเริ่มบันทึกตัวชี้วัดนี้</div>'}</div>`;
   h += `<div class="card"><h3>ประวัติการแจ้งเตือน (ใช้ตรวจย้อนหลังว่าเตือนถูกหรือไม่)</h3>${log.length
     ? `<table class="t">${log.map((a) => `<tr class="click" data-tc="${a.tc}"><td>${timeTH(a.time)}</td><td>${esc(a.name)}</td><td>${badge(a.to)}</td></tr>`).join("")}</table>`
     : '<div class="note">ยังไม่มีการแจ้งเตือน</div>'}</div>`;
