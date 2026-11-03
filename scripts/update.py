@@ -120,9 +120,11 @@ def get_rain(ctx, idx):
     data = ctx.fetch("tw_rain24", ctx.cfg["thaiwater_base"] + "/rain_24h", timeout=240)
     provs = {norm_name(p) for p in ctx.cfg["provinces"]}
     out = []
+    offsets = ctx.cfg.get("rain_time_offset_h", {})
     for r in find_records(data, "station"):
         st = r.get("station") or {}
         geo = r.get("geocode") or {}
+        agency = th((r.get("agency") or st.get("agency") or {}).get("agency_name")) if isinstance(r.get("agency") or st.get("agency"), dict) else ""
         lat, lon = fnum(st.get("tele_station_lat")), fnum(st.get("tele_station_long"))
         tam = idx.by_names(th(geo.get("province_name")), th(geo.get("amphoe_name")), th(geo.get("tumbon_name"))) or idx.locate(lon, lat)
         if not tam and norm_name(th(geo.get("province_name"))) not in provs:
@@ -131,9 +133,23 @@ def get_rain(ctx, idx):
             "k": f"twr:{st.get('id')}", "name": th(st.get("tele_station_name")), "lat": lat, "lon": lon,
             "tc": tam["tc"] if tam else None, "ac": tam["ac"] if tam else None,
             "r24": fnum(r.get("rain_24h")), "r1": fnum(r.get("rain_1h")),
-            "time": iso(parse_local(r.get("rainfall_datetime") or r.get("rain_datetime"))),
+            "time": rain_time(parse_local(r.get("rainfall_datetime") or r.get("rain_datetime")), agency, offsets, ctx.now),
+            "agency": (agency or "").strip(),
         })
     return out
+
+
+def rain_time(t, agency, offsets, now):
+    """Agencies stamp hourly rain differently. On 28 Oct 2569 the CCTV showed the downpour at ~14:30;
+    HII gauges reported it at 15:00 (end of hour) and RID gauges at 14:00 (start of hour). Shift RID
+    stamps to the end of the hour so both mean the same thing and fresh RID rain is not dropped as old."""
+    if not t:
+        return None
+    for name, h in offsets.items():
+        if name and name in (agency or ""):
+            t = min(t + timedelta(hours=h), now)
+            break
+    return iso(t)
 
 
 def get_dams(ctx):
@@ -654,7 +670,8 @@ def compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_tambons=None, da
             lv, g1, g3, i1, i3 = 1, sg1, sg3, si1, si3
             suspect_note = " (สถานีเดียวที่ยังไม่มีสถานีข้างเคียงยืนยัน จึงยกระดับได้ไม่เกินเฝ้าระวัง)"
         row = {"name": z["name"], "lv": lv, "i1": i1, "i3": i3, "n_gauges": len(g),
-               "g1": (g1 or {}).get("name"), "g3": (g3 or {}).get("name"), "src": (g1 or {}).get("i1_src")}
+               "g1": (g1 or {}).get("name"), "g3": (g3 or {}).get("name"), "src": (g1 or {}).get("i1_src"),
+               "data_time": ((g1 if i1 >= ur["watch_1h"] else g3) or {}).get("time"), "cameras": z.get("cameras", [])}
         urban.append(row)
         if lv:
             for tc in ztc:
@@ -662,6 +679,7 @@ def compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_tambons=None, da
                 what = (f"{row['g1']} วัดได้ {i1:.0f} มม. ใน 1 ชม." if by1 else f"{row['g3']} วัดได้ {i3:.0f} มม. ใน 3 ชม.")
                 est = " (ค่าประมาณจากฝนสะสม อาจต่ำกว่าจริง)" if row["src"] != "สสน. 1 ชม." else ""
                 bump(T[tc], lv, "urban_rain", f"ฝนหนักใน{z['name']}: {what}{est}{suspect_note} · คู/คลองระบายในเมืองอาจล้นแม้คลองสายหลักยังต่ำ")
+                T[tc]["data_time"] = row["data_time"]
     ctx.urban = urban
     # dam tailwater above its normal high → downstream districts on watch
     for d in dams or []:
@@ -736,8 +754,12 @@ def make_alerts(ctx, T, prev_latest, tam_props, prev_log=None):
             if recent:  # already told people about this tambon at this level recently
                 continue
             p = tam_props[tc]
-            out.append({"time": iso(ctx.now), "tc": tc, "name": f"ต.{p['t']} อ.{p['a']} จ.{p['p']}", "from": before, "to": t["lv"],
-                        "why": t["reasons"][0]["text"] if t["reasons"] else ""})
+            a = {"time": iso(ctx.now), "tc": tc, "name": f"ต.{p['t']} อ.{p['a']} จ.{p['p']}", "from": before, "to": t["lv"],
+                 "why": t["reasons"][0]["text"] if t["reasons"] else "", "src": t["reasons"][0]["src"] if t["reasons"] else None}
+            dt = parse_iso(t.get("data_time")) if t["reasons"] and t["reasons"][0]["src"] == "urban_rain" else None
+            if dt:  # minutes from the end of the rainy hour to our alert: the number to drive down
+                a["data_time"], a["lag_min"] = iso(dt), round((ctx.now - dt).total_seconds() / 60)
+            out.append(a)
     return out
 
 
@@ -984,6 +1006,9 @@ def main():
     if gauges is not None:
         n1 = sum(1 for g in gauges if g.get("r1") is not None)
         ctx.status["rain"]["note"] = f"มีค่าฝน 1 ชม. จาก สสน. {n1} สถานี" if n1 else "ไม่มีค่าฝน 1 ชม. จาก สสน. ใช้ค่าประมาณจากฝนสะสม"
+        ag = Counter(g.get("agency") or "ไม่ระบุหน่วยงาน" for g in gauges)
+        shifted = sum(n for a_, n in ag.items() if any(k in a_ for k in cfg.get("rain_time_offset_h", {})))
+        ctx.status["rain"]["note"] += f" · เลื่อนเวลาฝนกรมชลประทาน +1 ชม. {shifted} สถานี · หน่วยงาน: " + ", ".join(f"{a_} {n}" for a_, n in ag.most_common(4))
 
     if stations is None and prev_latest.get("stations"):
         stations = prev_latest["stations"]
