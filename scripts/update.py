@@ -298,7 +298,7 @@ def get_forecast(ctx, amphoes, prev_fc):
         lats = ",".join(str(a["lat"]) for a in batch)
         lons = ",".join(str(a["lon"]) for a in batch)
         base = f"https://api.open-meteo.com/v1/forecast?latitude={lats}&longitude={lons}&timezone=Asia%2FBangkok&past_days=1&forecast_days=4"
-        rain = ctx.fetch(f"om_rain_{b // bs}", base + "&hourly=precipitation&models=" + ",".join(om["models"]))
+        rain = ctx.fetch(f"om_rain_{b // bs}", base + "&hourly=precipitation,cape&models=" + ",".join(om["models"]))
         rain = rain if isinstance(rain, list) else [rain]
         try:
             soil = ctx.fetch(f"om_soil_{b // bs}", base + "&hourly=soil_moisture_3_to_9cm")
@@ -311,6 +311,7 @@ def get_forecast(ctx, amphoes, prev_fc):
             res[a["ac"]] = {
                 "times": h.get("time", []),
                 "models": {m: h.get(f"precipitation_{m}") or ([] if len(om["models"]) > 1 else h.get("precipitation", [])) for m in om["models"]},
+                "cape": {m: h.get(f"cape_{m}") or ([] if len(om["models"]) > 1 else h.get("cape", [])) for m in om["models"]},
                 "soil": (s or {}).get("hourly", {}).get("soil_moisture_3_to_9cm", []),
                 "soil_times": (s or {}).get("hourly", {}).get("time", []),
             }
@@ -893,6 +894,74 @@ def quality_summary(q):
             "d7": agg(days[-7:]), "d30": agg(days[-30:]), "yesterday": agg(days[-1:])}
 
 
+def storm_risk(cfg, fc, gauges, prev_log, now):
+    """Experimental: 'severe thunderstorm risk day' per amphoe from forecast CAPE (shown only, never alerts).
+    Backtest 14 Oct–2 Nov 2569, Hat Yai: CAPE ≥ 3000 J/kg from the latest run caught 3 of 5 heavy-rain days
+    (≥ 30 mm/h) with 2 false alarms in 16 days. The decision is frozen at the first run of the morning so the
+    log can later be scored honestly against what actually fell."""
+    c = cfg.get("storm_risk", {})
+    if not c.get("enabled", True) or not fc:
+        return None, prev_log
+    thr, heavy = c.get("cape_threshold", 3000), c.get("heavy_mm_h", 30)
+    lo, hi = c.get("window_hours", [6, 23])
+    nl = now.astimezone(ICT)
+    day = nl if nl.hour < c.get("switch_to_tomorrow_hour", 18) else nl + timedelta(days=1)
+    key = day.strftime("%Y-%m-%d")
+    out = {}
+    for ac, a in (fc.get("amphoes") or {}).items():
+        best = None
+        for m, vals in (a.get("cape") or {}).items():
+            for t, v in zip(a.get("times", []), vals or []):
+                if v is not None and t[:10] == key and lo <= int(t[11:13]) <= hi and (best is None or v > best[0]):
+                    best = (v, t[11:16], m)
+        if best:
+            out[ac] = {"cape": round(best[0]), "time": best[1], "model": best[2], "flag": best[0] >= thr}
+    # verification log: {date: {ac: {cape, flag, issued, obs_max, obs_time}}}
+    log = prev_log or {}
+    today = nl.strftime("%Y-%m-%d")
+    issue_by = c.get("issue_by_hour", 10)
+    for d, ok in ((key, True), (today, True)):
+        if d not in log:
+            log[d] = {}
+    if key == today and nl.hour <= issue_by:  # morning decision for today, kept once made
+        for ac, r in out.items():
+            e = log[today].setdefault(ac, {})
+            if "issued" not in e:
+                e.update(cape=r["cape"], flag=r["flag"], issued=iso(now))
+    for g in gauges or []:  # what actually fell today, per amphoe (hour-end stamps)
+        t = parse_iso(g.get("time"))
+        if not t or g.get("suspect") or g.get("ac") is None or g.get("i1") is None:
+            continue
+        if t.astimezone(ICT).strftime("%Y-%m-%d") != today:
+            continue
+        e = log[today].setdefault(g["ac"], {})
+        if g["i1"] > e.get("obs_max", -1):
+            e.update(obs_max=round(g["i1"], 1), obs_time=t.astimezone(ICT).strftime("%H:%M"), obs_gauge=g["name"])
+    for d in sorted(log)[:-400]:
+        del log[d]
+
+    def score(acs, days):
+        sc = {"hit": 0, "miss": 0, "false_alarm": 0, "quiet": 0, "days": 0}
+        for d in days:
+            if d >= today:  # the day is not over yet
+                continue
+            for ac in acs:
+                e = log.get(d, {}).get(ac)
+                if not e or "issued" not in e:
+                    continue
+                sc["days"] += 1
+                hv = (e.get("obs_max") or 0) >= heavy
+                sc["hit" if e["flag"] and hv else "miss" if hv else "false_alarm" if e["flag"] else "quiet"] += 1
+        return sc
+    days = sorted(log)[-31:]
+    focus = c.get("focus_amphoes", [])
+    res = {"date": key, "threshold": thr, "heavy_mm_h": heavy, "window": [lo, hi], "amphoes": out,
+           "score_all": score(list(out), days), "score_focus": score(focus, days), "focus": focus,
+           "log_days": [d for d in sorted(log) if d < today][-14:],
+           "recent": {d: {ac: log[d][ac] for ac in focus if ac in log[d]} for d in sorted(log)[-14:]}}
+    return res, log
+
+
 def dam_status(cfg, stations, dam_raw, ev, now):
     by = {norm_code(s["code"]): s for s in stations if s.get("code")}
     out = []
@@ -973,6 +1042,7 @@ def main():
     prev_alerts = load_json(os.path.join(args.prev, "alerts_log.json"), [])
     prev_rh = load_json(os.path.join(args.prev, "rain_history.json"), {})
     prev_q = load_json(os.path.join(args.prev, "quality_log.json"), None)
+    prev_storm = load_json(os.path.join(args.prev, "storm_log.json"), {})
     ctx.urban = []
 
     fews_thr = ctx.run("fews_thr", "เกณฑ์ระดับน้ำสถานี (สสน. FEWS)", lambda: get_thresholds(ctx)) or {}
@@ -1029,6 +1099,7 @@ def main():
         summary("## ❌ ดึงข้อมูลไม่สำเร็จทุกแหล่ง\n\nไม่เขียนทับข้อมูลรอบก่อน หน้าเว็บจะแสดงข้อมูลเดิมพร้อมเวลาที่อัปเดตล่าสุด\n\n" +
                 "\n".join(f"- {v['label']}: {v.get('error', '')}" for v in ctx.status.values()))
         sys.exit(2)
+    storm, storm_log = storm_risk(cfg, fc, gauges, prev_storm, ctx.now)
     dams = dam_status(cfg, stations or [], dam_raw or {}, load_json(os.path.join(args.static, "event_analysis.json"), {}) or {}, ctx.now)
     T, A, P, chains = compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_latest.get("tambons"), dams)
     alerts = make_alerts(ctx, T, prev_latest, tam_props, prev_alerts)
@@ -1044,7 +1115,7 @@ def main():
         "alerts_now": alerts, "notify": sent,
         "forecast_at": (fc or {}).get("fetched_at"),
         "urban_rain": ctx.urban, "urban_rain_cfg": cfg.get("urban_rain", {}), "dams": dams,
-        "quality": quality_summary(qlog), "rain_suspect": [{"k": g["k"], "name": g["name"], "tc": g["tc"], "why": g["suspect_why"]} for g in suspects],
+        "quality": quality_summary(qlog), "storm_risk": storm, "rain_suspect": [{"k": g["k"], "name": g["name"], "tc": g["tc"], "why": g["suspect_why"]} for g in suspects],
     }
     out = args.out
     save_json(os.path.join(out, "latest.json"), latest)
@@ -1056,6 +1127,8 @@ def main():
     save_json(os.path.join(out, "rain_history.json"), rh)
     if qlog:
         save_json(os.path.join(out, "quality_log.json"), qlog)
+    if storm_log:
+        save_json(os.path.join(out, "storm_log.json"), storm_log)
     write_rain_log(args.prev, out, gauges or [], ctx.now)
 
     # run summary
@@ -1072,6 +1145,7 @@ def main():
            f"- สถานีวัดฝน {g['rain_gauges']}",
            f"- สถานีในห่วงโซ่ที่หาไม่พบ: {', '.join(g['chain_missing']) or '-'}",
            "- ฝนหนักในเมือง: " + (" · ".join(f"{u['name']} {u['i1']:.0f} มม./1 ชม. ({LEVELS[u['lv']]})" for u in ctx.urban) or "-"),
+           "- วันเสี่ยงฝนฟ้าคะนองรุนแรง (ทดลอง, ไม่ส่งแจ้งเตือน): " + (", ".join(a["a"] for a in admin["amphoes"] if ((storm or {}).get("amphoes", {}).get(a["ac"]) or {}).get("flag")) or "-"),
            "- สถานีวัดฝนที่ยังไม่มีสถานีข้างเคียงยืนยัน: " + (", ".join(g["name"] for g in suspects) or "-"),
            "- ตรวจความครบถ้วนข้อมูลรายวัน: " + ("ครบทุกสถานีสำหรับเมื่อวานแล้ว" if audited else "ตรวจของเมื่อวานครบแล้ว" if (ctx.now.astimezone(ICT) - timedelta(days=1)).strftime('%Y-%m-%d') in (qlog or {}).get("days", {}) else f"รอบนี้ตรวจไปแล้ว {len(((qlog or {}).get('partial') or {}).get(((ctx.now.astimezone(ICT) - timedelta(days=1)).strftime('%Y-%m-%d')), {}))} สถานี (ทำวันละครั้งหลัง 06:00 น. แบ่งหลายรอบ)"),
            f"- แจ้งเตือน: {sent}"]
