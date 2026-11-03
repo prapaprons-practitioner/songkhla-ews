@@ -923,7 +923,7 @@ def storm_risk(cfg, fc, gauges, prev_log, now):
     for d, ok in ((key, True), (today, True)):
         if d not in log:
             log[d] = {}
-    if key == today and nl.hour <= issue_by:  # morning decision for today, kept once made
+    if key == today and c.get("issue_from_hour", 6) <= nl.hour <= issue_by:  # morning decision for today, kept once made
         for ac, r in out.items():
             e = log[today].setdefault(ac, {})
             if "issued" not in e:
