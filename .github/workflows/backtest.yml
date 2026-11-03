@@ -1,0 +1,40 @@
+name: ทดสอบพยากรณ์ฝนล่วงหน้า
+
+# รันเองเมื่อต้องการ: เทียบพยากรณ์ Open-Meteo กับฝนที่ตกจริงในอำเภอหาดใหญ่
+# ผลลัพธ์: หน้าสรุปของรอบนี้ และไฟล์ site/data/static/forecast_backtest.json
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "วันเริ่ม (ปปปป-ดด-วว ค.ศ.)"
+        default: "2026-09-01"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: ดึงบันทึกฝนรายชั่วโมงจากสาขา gh-pages
+        run: |
+          mkdir -p pages
+          git fetch --depth 1 origin gh-pages && git --work-tree=pages checkout origin/gh-pages -- data
+
+      - name: ทดสอบย้อนหลัง
+        run: python3 scripts/backtest_forecast.py --config config.json --static site/data/static --rain-log pages/data/rain_log --latest pages/data/latest.json --start "${{ github.event.inputs.start || '2026-09-01' }}"
+
+      - name: บันทึกผลลง repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data/static/forecast_backtest.json
+          git commit -m "ผลทดสอบพยากรณ์ฝนล่วงหน้า" || echo "ผลไม่เปลี่ยน"
+          git pull -q --rebase && git push
