@@ -9,6 +9,7 @@ import sys
 from collections import Counter
 from datetime import timedelta
 
+import flood_reports as FR
 from common import (ICT, TambonIndex, find_records, fnum, http_get, iso, load_json, norm_code,
                     norm_name, now_utc, parse_iso, parse_local, save_json, summary, th)
 
@@ -609,6 +610,7 @@ def compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_tambons=None, da
     for tc, v in (ff or {}).items():
         if tc in T:
             bump(T[tc], thr["flashflood_level"], "flashflood", "สสน. ระบุเป็นพื้นที่เสี่ยงน้ำท่วมฉับพลัน/น้ำป่า" + (f" (FFPI {v['ffpi']})" if v.get("ffpi") is not None else ""))
+    props = {f["properties"]["tc"]: f["properties"] for f in tam_geo["features"]}
     # upstream → downstream chains
     by_code = {}
     for s in stations or []:
@@ -646,14 +648,13 @@ def compute(ctx, tam_geo, admin, stations, gauges, fc, ff, prev_tambons=None, da
             trig["msg"] = "ต้นน้ำ: " + " · ".join(msgs)
         if trig:
             for tc, t in T.items():
-                p = next((f["properties"] for f in tam_geo["features"] if f["properties"]["tc"] == tc), None)
+                p = props.get(tc)
                 if p and p["a"] == ch["downstream_amphoe"] and p["t"] in ch["downstream_tambons"]:
                     bump(t, trig["lv"], "chain", f"{ch['name']}: {trig['msg']}")
         chains.append({"name": ch["name"], "stations": rows, "trigger": trig})
     # heavy rain inside towns: drains and small canals fill long before the main river moves
     ur = cfg.get("urban_rain", {})
     urban = []
-    props = {f["properties"]["tc"]: f["properties"] for f in tam_geo["features"]}
     for z in ur.get("zones", []):
         ztc = [tc for tc, p in props.items() if p["a"] == z["amphoe"] and p["t"] in z["tambons"]]
         g = [x for x in gauges or [] if x["tc"] in ztc and x.get("time")
@@ -1025,6 +1026,7 @@ def main():
     ap.add_argument("--static", default="site/data/static")
     ap.add_argument("--prev", default="prev/data")
     ap.add_argument("--out", default="out/data")
+    ap.add_argument("--reports", default="reports/flood_reports.csv", help="บันทึกเหตุน้ำท่วมจริง (CSV)")
     ap.add_argument("--fixtures", default=None, help="โฟลเดอร์ไฟล์ทดสอบ (ไม่ต่ออินเทอร์เน็ต)")
     ap.add_argument("--now", default=None, help="กำหนดเวลาปัจจุบัน (ใช้ทดสอบ) เช่น 2026-11-24T10:00:00+07:00")
     args = ap.parse_args()
@@ -1043,6 +1045,7 @@ def main():
     prev_rh = load_json(os.path.join(args.prev, "rain_history.json"), {})
     prev_q = load_json(os.path.join(args.prev, "quality_log.json"), None)
     prev_storm = load_json(os.path.join(args.prev, "storm_log.json"), {})
+    prev_lvlog = load_json(os.path.join(args.prev, "level_log.json"), None)
     ctx.urban = []
 
     fews_thr = ctx.run("fews_thr", "เกณฑ์ระดับน้ำสถานี (สสน. FEWS)", lambda: get_thresholds(ctx)) or {}
@@ -1105,6 +1108,15 @@ def main():
     alerts = make_alerts(ctx, T, prev_latest, tam_props, prev_alerts)
     sent = notify(alerts, ctx)
     log = (prev_alerts + alerts)[-2000:]
+    # real floods reported by people vs what the system said beforehand
+    lvlog = FR.update_level_log(prev_lvlog, T, prev_alerts, ctx.now)
+    fr_cfg = cfg.get("flood_reports", {})
+    rep_txt = open(args.reports, encoding="utf-8").read() if args.reports and os.path.exists(args.reports) else ""
+    form_txt = (ctx.run("flood_form", "บันทึกเหตุน้ำท่วมจากแบบฟอร์ม", lambda: ctx.fetch("flood_form", fr_cfg["form_csv_url"], as_text=True, timeout=30))
+                if fr_cfg.get("form_csv_url") else "")
+    fr_from = parse_iso(lvlog.get("seed_since") or lvlog.get("since"))
+    freports = FR.build(cfg, rep_txt, form_txt or "", idx, admin, tam_props, lvlog, ctx.now,
+                        start=fr_from - timedelta(days=1) if fr_from else None)
 
     latest = {
         "generated_at": iso(ctx.now), "area_name": cfg["area_name"], "levels": LEVELS,
@@ -1129,6 +1141,8 @@ def main():
         save_json(os.path.join(out, "quality_log.json"), qlog)
     if storm_log:
         save_json(os.path.join(out, "storm_log.json"), storm_log)
+    save_json(os.path.join(out, "level_log.json"), lvlog)
+    save_json(os.path.join(out, "flood_reports.json"), freports)
     write_rain_log(args.prev, out, gauges or [], ctx.now)
 
     # run summary
@@ -1148,6 +1162,7 @@ def main():
            "- วันเสี่ยงฝนฟ้าคะนองรุนแรง (ทดลอง, ไม่ส่งแจ้งเตือน): " + (", ".join(a["a"] for a in admin["amphoes"] if ((storm or {}).get("amphoes", {}).get(a["ac"]) or {}).get("flag")) or "-"),
            "- สถานีวัดฝนที่ยังไม่มีสถานีข้างเคียงยืนยัน: " + (", ".join(g["name"] for g in suspects) or "-"),
            "- ตรวจความครบถ้วนข้อมูลรายวัน: " + ("ครบทุกสถานีสำหรับเมื่อวานแล้ว" if audited else "ตรวจของเมื่อวานครบแล้ว" if (ctx.now.astimezone(ICT) - timedelta(days=1)).strftime('%Y-%m-%d') in (qlog or {}).get("days", {}) else f"รอบนี้ตรวจไปแล้ว {len(((qlog or {}).get('partial') or {}).get(((ctx.now.astimezone(ICT) - timedelta(days=1)).strftime('%Y-%m-%d')), {}))} สถานี (ทำวันละครั้งหลัง 06:00 น. แบ่งหลายรอบ)"),
+           f"- บันทึกเหตุน้ำท่วมจริง: {freports['score']['n']} เหตุที่ให้คะแนนได้ (เตือนทัน {freports['score']['warned']} · เฝ้าระวังเท่านั้น {freports['score']['watch_only']} · พลาด {freports['score']['missed']}) · รอตรวจ {freports['counts']['pending']}",
            f"- แจ้งเตือน: {sent}"]
     summary("\n".join(md))
 
