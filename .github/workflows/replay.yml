@@ -1,0 +1,48 @@
+name: ทดสอบกติกาเตือนภัยกับเหตุการณ์ในอดีต
+
+# รันกติกาเตือนภัยปัจจุบันซ้ำกับระดับน้ำย้อนหลังในสาขา archive ทีละ 30 นาที
+# แล้วเทียบกับ reports/flood_reports.csv (เหตุน้ำท่วมจริง)
+# กด Run workflow เองเมื่อแก้เกณฑ์ใน config.json หรือเพิ่มบันทึกเหตุน้ำท่วม และรันเองหลังเก็บข้อมูลย้อนหลังทุกต้นเดือน
+# ผลลัพธ์: หน้าสรุปของรอบนี้ และไฟล์ site/data/static/replay.json
+on:
+  schedule:
+    - cron: "43 21 2 * *"   # วันที่ 3 ของทุกเดือน 04:43 น. เวลาไทย (หลังเก็บข้อมูลย้อนหลัง)
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "วันเริ่มเหตุการณ์ (ปปปป-ดด-วว ค.ศ.)"
+        default: "2025-11-15"
+      end:
+        description: "วันสิ้นสุดเหตุการณ์"
+        default: "2025-11-30"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: replay
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: ดึงระดับน้ำย้อนหลังจากสาขา archive
+        run: |
+          mkdir -p arch
+          git fetch --depth 1 origin archive
+          git archive FETCH_HEAD | tar -x -C arch   # copy files only, leave the main branch index clean
+
+      - name: รันกติกาซ้ำ
+        run: python3 scripts/replay_event.py --config config.json --static site/data/static --archive arch --reports reports/flood_reports.csv --start "${{ github.event.inputs.start || '2025-11-15' }}" --end "${{ github.event.inputs.end || '2025-11-30' }}" --out site/data/static/replay.json
+
+      - name: บันทึกผลลง repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data/static/replay.json
+          git commit -m "ผลทดสอบกติกากับเหตุการณ์ในอดีต" || echo "ผลไม่เปลี่ยน"
+          git pull -q --rebase origin main && git push origin HEAD:main
