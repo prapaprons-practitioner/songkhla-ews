@@ -155,3 +155,6 @@ table.t tr.click:hover { background: var(--surface-2); }
 .tag-exp{display:inline-block;font-size:11px;padding:0 6px;border-radius:99px;background:#ece7fb;color:#4a3596;margin-left:4px;font-weight:500}
 .tag-storm{display:inline-block;font-size:11px;padding:0 6px;border-radius:99px;background:#7b5cd6;color:#fff}
 .up{color:#b3261e;font-weight:600}.dn{color:#0d6c78;font-weight:600}
+.mid{color:#a15c00;font-weight:600}
+.reportbtn{display:block;text-align:center;margin:10px 0 2px;padding:9px 12px;border-radius:var(--radius);background:#0d6c78;color:#fff;font-weight:600;text-decoration:none}
+.reportbtn:hover{background:#0a5761}

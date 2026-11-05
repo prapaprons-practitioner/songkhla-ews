@@ -20,7 +20,7 @@ const KNOWN_GAPS = [
   ["ความลึกน้ำท่วมจริงบนพื้นที่", "ไม่มีเซนเซอร์บนถนนในภาคใต้ ระบบบอกได้แค่ความเสี่ยง ไม่ใช่ความลึก", "เทศบาล / ภาพดาวเทียม GISTDA (ต้องขอ API key)"],
 ];
 
-const S = { latest: null, tam: null, amp: null, admin: null, roads: null, event: null, alerts: [],
+const S = { latest: null, tam: null, amp: null, admin: null, roads: null, event: null, alerts: [], freports: null, replay: null,
   props: {}, sel: { pc: null, ac: null, tc: null }, onlyRisk: false, q: "", rq: "", openRoad: null, layers: {} };
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -371,6 +371,7 @@ function renderArea() {
     const n = tamCounts(() => true);
     html += stormCard(() => true).replace('<div class="card storm">', '<div class="card storm" id="storm-top">');
     html += hero(L0?.area_name || "ทุกจังหวัด", `${Object.keys(S.props).length} ตำบล · ${S.admin.amphoes.length} อำเภอ`, Math.max(...Object.values(L0?.provinces || {}).map((p) => p.lv ?? 0), 0), n);
+    if (safeUrl(S.freports?.form_url)) html += `<a class="reportbtn" href="${esc(S.freports.form_url)}" target="_blank" rel="noopener">แจ้งเหตุน้ำท่วมที่เห็นจริง</a><p class="note">ช่วยให้ตรวจได้ว่าระบบเตือนทันหรือไม่ · ไม่ต้องใส่ชื่อหรือเบอร์โทร</p>`;
     html += childList(S.admin.provinces.map((p) => {
       const c = tamCounts((x) => x.pc === p.pc);
       return { key: p.pc, attr: "pc", name: "จ." + p.p, lv: L0?.provinces?.[p.pc]?.lv, meta: countsText(c), n: c };
@@ -657,6 +658,7 @@ function renderGaps() {
     ${L0.urban_rain_cfg?.watch_1h ? `<tr><td>ฝนหนักในเขตเมือง (สถานีใดสถานีหนึ่งในเขต, มม.)</td><td class="n">1 ชม. ≥${L0.urban_rain_cfg.watch_1h} หรือ 3 ชม. ≥${L0.urban_rain_cfg.watch_3h}</td><td class="n">1 ชม. ≥${L0.urban_rain_cfg.warning_1h} หรือ 3 ชม. ≥${L0.urban_rain_cfg.warning_3h}</td><td>–</td></tr>` : ""}
     <tr><td>ระดับน้ำที่สถานี</td><td>ขึ้นเร็ว ≥${th.station.rise_watch_m_per_h} ม./ชม. หรือถึงตลิ่งใน ≤${th.station.eta_watch_h} ชม.</td><td>ต่ำกว่าตลิ่ง ≤${th.station.near_bank_m} ม. หรือถึงตลิ่งใน ≤${th.station.eta_warning_h} ชม.</td><td>ถึงหรือเกินตลิ่ง</td></tr>
     </table><p class="note">ดินอิ่มน้ำ (≥${th.soil_wet_m3m3} ม³/ม³) ยกระดับฝนจากเฝ้าระวังเป็นเตือนภัย เฉพาะเมื่อฝนพยากรณ์ 24 ชม. ≥${th.rain.soil_bump_min_next24 ?? 60} มม. หรือฝนสะสม ≥${th.rain.soil_bump_min_acc ?? 150} มม. · ฝนที่ตกแล้วใช้สถานีวัดฝนอันดับ 3 ของอำเภอ · ระดับขึ้นได้ทันที แต่ลดลงได้เมื่อค่าต่ำกว่าเดิม 2 รอบติดกัน · ไม่แจ้งเตือนซ้ำตำบลเดิมที่ระดับเดิมภายใน 6 ชม. · พื้นที่ที่ สสน. ระบุเสี่ยงน้ำป่าอยู่ระดับ${LV[th.flashflood_level]}ขึ้นไป · แก้เกณฑ์ได้ใน config.json</p></div>`;
+  h += replayCard();
   if (S.event) {
     const ev = S.event;
     h += `<div class="card"><h3>ผลวิเคราะห์เหตุการณ์ ${esc(ev.window[0])} ถึง ${esc(ev.window[1])}</h3>
@@ -672,6 +674,7 @@ function renderGaps() {
   h += `<div class="card"><h3>ข้อมูลที่ระบบยังไม่มี</h3><table class="t"><tr><th>ข้อมูล</th><th>ผลต่อระบบ</th><th>ใครมี</th></tr>
     ${KNOWN_GAPS.map(([a, b, c]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td><td>${esc(c)}</td></tr>`).join("")}</table></div>`;
   const log = [...(S.alerts || [])].reverse().slice(0, 40);
+  h += floodReportCard();
   h += stormScoreCard();
   const lagRows = [...(S.alerts || [])].filter((a) => a.lag_min != null).reverse();
   const seen = new Set(), lag = lagRows.filter((a) => { const k = a.time; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 12);
@@ -684,6 +687,67 @@ function renderGaps() {
     : '<div class="note">ยังไม่มีการแจ้งเตือน</div>'}</div>`;
   el.innerHTML = h;
   el.querySelectorAll("tr[data-tc]").forEach((tr) => tr.addEventListener("click", () => { const p = S.props[tr.dataset.tc]; if (p) select({ pc: p.pc, ac: p.ac, tc: p.tc }); }));
+}
+
+const safeUrl = (u) => (typeof u === "string" && /^https?:\/\//i.test(u.trim()) ? u.trim() : null);
+const FR_RESULT = { warned: ['<span class="dn">เตือนทัน</span>', "ขึ้นถึงเตือนภัยภายใน 24 ชม. ก่อนน้ำท่วม"],
+  watch_only: ['<span class="mid">เฝ้าระวังเท่านั้น</span>', "ขึ้นแค่เฝ้าระวัง ไม่ถึงเตือนภัย"], missed: ['<span class="up">พลาด</span>', "ไม่มีการเตือนใน 24 ชม. ก่อนน้ำท่วม"],
+  no_data: ['<span class="note">ยังไม่มีประวัติระดับ</span>', ""], pending: ['<span class="note">รอตรวจ</span>', ""], unscored: ['<span class="note">ระบุเวลา/ที่ไม่ได้</span>', ""] };
+function frWhere(r) {
+  const p = r.tc ? S.props[r.tc] : null;
+  const a = !p && r.ac ? (S.admin?.amphoes || []).find((x) => x.ac === r.ac) : null;
+  return p ? `ต.${esc(p.t)} อ.${esc(p.a)}` : a ? `อ.${esc(a.a)} <span class="note">(ทั้งอำเภอ)</span>` : esc([r.tambon, r.amphoe, r.province].filter(Boolean).join(" "));
+}
+function frLead(r) {
+  if (r.q === "day") return '<span class="note">ทราบแค่วัน</span>';
+  const h = (v, atleast) => (atleast ? `${fmt(v)}+ ชม.` : `${r.q === "observed" ? "ไม่เกิน " : ""}${fmt(v, 1)} ชม.`);
+  const w = r.lead_warn_h != null ? h(r.lead_warn_h, r.lead_warn_h_atleast) : "";
+  const wa = r.lead_watch_h != null && (r.lead_warn_h == null || r.lead_watch_h > r.lead_warn_h) ? `<span class="note">เฝ้าระวัง ${h(r.lead_watch_h, r.lead_watch_h_atleast)}</span>` : "";
+  return [w, wa].filter(Boolean).join("<br>") || "–";
+}
+function frRows(rows) {
+  return `<table class="t"><tr><th>เวลาน้ำท่วม</th><th>ที่</th><th>ผล</th><th>เตือนก่อน</th></tr>${rows.map((r) => {
+    const src = safeUrl(r.source);
+    const tm = r.time ? (r.q === "day" ? thDate(new Date(r.time).toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" })) : timeTH(r.time)) : "–";
+    return `<tr><td>${tm}${r.q === "observed" ? '<br><span class="note">เวลาที่พบ/รายงาน</span>' : ""}</td>
+      <td>${frWhere(r)}<br><span class="note">${esc(r.place || "")}${r.depth_cm != null ? ` · ลึก ~${fmt(r.depth_cm)} ซม.` : ""}${src ? ` · <a href="${esc(src)}" target="_blank" rel="noopener">ที่มา</a>` : r.source ? ` · ${esc(r.source)}` : ""}${r.problems?.length ? ` · ${esc(r.problems.join(", "))}` : ""}</span></td>
+      <td>${(FR_RESULT[r.result] || ["", ""])[0]}${r.basis === "alerts" ? '<br><span class="note">ตรวจได้เฉพาะระดับเตือนภัย</span>' : ""}</td><td class="n">${frLead(r)}</td></tr>`;
+  }).join("")}</table>`;
+}
+const frScore = (sc) => `เตือนทัน <b>${sc.warned}</b> · เฝ้าระวังเท่านั้น <b>${sc.watch_only}</b> · พลาด <b>${sc.missed}</b> <span class="note">จาก ${sc.n} เหตุ${sc.lead_warn_median_h != null ? ` · เตือนก่อนน้ำท่วม (มัธยฐาน) ${fmt(sc.lead_warn_median_h, 1)} ชม.` : ""}</span>`;
+
+function floodReportCard() {
+  const fr = S.freports;
+  const form = safeUrl(fr?.form_url);
+  const how = `<p class="note">แจ้งเพิ่มได้${form ? `ทาง<a href="${esc(form)}" target="_blank" rel="noopener">แบบฟอร์ม</a> (ผู้ดูแลตรวจก่อนนับคะแนน) หรือ` : ""}โดยเพิ่มแถวในไฟล์ reports/flood_reports.csv ของ repo: วันเวลา · ชนิดเวลา (onset = เวลาที่เริ่มท่วม, observed = เวลาที่พบ/รายงาน, day = ทราบแค่วัน) · จังหวัด อำเภอ ตำบล · สถานที่ · ความลึก (ซม.) · ที่มา</p>`;
+  if (!fr) return `<div class="card"><h3>เหตุน้ำท่วมจริงเทียบกับการเตือน</h3><p class="note">ระบบจะเริ่มให้คะแนนในรอบอัปเดตถัดไป</p>${how}</div>`;
+  const live = fr.rows.filter((r) => r.result !== "no_data");
+  const ep = fr.episodes || {};
+  const names = Object.fromEntries((S.admin?.amphoes || []).map((a) => [a.ac, a.a]));
+  const foc = (S.latest?.storm_risk?.focus || ["TH9011", "TH9001"]).map((a) => "อ." + (names[a] || a)).join("/");
+  return `<div class="card"><h3>เหตุน้ำท่วมจริงเทียบกับการเตือน</h3>
+    <p><b>เหตุที่ตรวจแล้ว:</b> ${fr.score.n ? frScore(fr.score) : '<span class="note">ยังไม่มีบันทึกเหตุน้ำท่วมหลังเริ่มระบบ</span>'}</p>
+    <p><b>ระบบขึ้นระดับเตือนภัย:</b> ${fmt(ep.all?.n)} ครั้ง (${foc} ${fmt(ep.focus?.n)}) · มีรายงานน้ำท่วมยืนยันในอำเภอเดียวกัน ${fmt(ep.all?.confirmed)} ครั้ง <span class="note">ตั้งแต่ ${timeTH(ep.start)}</span></p>
+    ${fr.counts?.pending ? `<p><b>รอตรวจ:</b> ${fr.counts.pending} รายงานจากแบบฟอร์ม</p>` : ""}
+    ${live.length ? frRows(live.slice(0, 30)) : ""}
+    <p class="note">เตือนทัน = ตำบลนั้น (หรืออำเภอนั้น ถ้าไม่ระบุตำบล) ขึ้นถึงเตือนภัยภายใน 24 ชม. ก่อนเวลาน้ำท่วม · "เตือนก่อน" นับจากครั้งแรกที่ขึ้นระดับในช่วงนั้นถึงเวลาน้ำท่วม ถ้าเป็นเวลาที่พบ/รายงาน น้ำอาจท่วมก่อนหน้านั้น จึงเป็นค่าสูงสุดที่เป็นไปได้ · การเตือนที่ยังไม่มีรายงานยืนยัน ไม่ได้แปลว่าเตือนผิด อาจแค่ยังไม่มีคนแจ้ง</p>${how}</div>`;
+}
+
+function replayCard() {
+  const R = S.replay;
+  if (!R) return "";
+  const fr = R.reports || {};
+  const lvTh = { 1: "เฝ้าระวัง", 2: "เตือนภัย", 3: "วิกฤต" };
+  const ks = Object.entries(R.key_stations || {}).sort((a, b) => (a[1]["2"] || "z").localeCompare(b[1]["2"] || "z"));
+  const months = Object.entries(R.alerts_by_month || {});
+  return `<div class="card"><h3>ทดสอบกติกาปัจจุบันกับน้ำท่วม ${esc(R.window[0])} ถึง ${esc(R.window[1])}</h3>
+    <p class="note">รันโค้ดคำนวณชุดเดียวกับระบบจริงซ้ำทุก ${R.step_min} นาที ด้วยระดับน้ำย้อนหลัง ${R.stations} สถานี · ใช้ได้เฉพาะ${esc(R.rules)} · รันเมื่อ ${esc(R.generated_at)}</p>
+    <p><b>เหตุน้ำท่วมที่มีบันทึก:</b> ${fr.score ? frScore(fr.score) : "–"}</p>
+    <p><b>การเตือนระดับเตือนภัยขึ้นไปช่วงนี้:</b> ${fmt(R.alerts_event_n)} ครั้งทุกตำบล · หาดใหญ่/เมืองสงขลา ${fmt(R.alerts_event_focus_n)} ครั้ง</p>
+    ${fr.rows?.length ? frRows(fr.rows) : ""}
+    ${ks.length ? `<p><b>สถานีหลัก: ครั้งแรกที่ถึงแต่ละระดับ</b></p><table class="t"><tr><th>สถานี</th>${[1, 2, 3].map((k) => `<th>${lvTh[k]}</th>`).join("")}</tr>${ks.map(([c, v]) => `<tr><td>${esc(c)} ${esc(v.name)}${v.tc && S.props[v.tc] ? `<br><span class="note">ต.${esc(S.props[v.tc].t)}</span>` : ""}</td>${[1, 2, 3].map((k) => `<td>${v[k] ? timeTH(v[k]) : "–"}</td>`).join("")}</tr>`).join("")}</table>` : ""}
+    ${months.length > 1 ? `<p><b>จำนวนครั้งที่กติการะดับน้ำจะเตือน (เตือนภัยขึ้นไป) รายเดือน</b></p><table class="t"><tr><th>เดือน</th><th>ทุกตำบล</th><th>หาดใหญ่/เมืองสงขลา</th></tr>${months.map(([m, n]) => `<tr><td>${esc(m)}</td><td class="n">${fmt(n)}</td><td class="n">${fmt(R.alerts_by_month_focus?.[m] || 0)}</td></tr>`).join("")}</table>` : ""}
+    <p class="note">ข้อจำกัด: ไม่มีฝนรายชั่วโมงย้อนหลังในข้อมูลเปิด จึงยังทดสอบกติกาฝนและฝนหนักในเมืองไม่ได้ · ข้อมูลย้อนหลังคือค่าที่หน่วยงานส่งครบแล้ว ตอนเกิดเหตุจริงบางสถานี (โดยเฉพาะกรมชลประทานช่วงกลางคืน) ส่งช้ากว่านี้ ผลจริงจึงอาจช้ากว่าที่เห็น · เพิ่มเหตุน้ำท่วมใน reports/flood_reports.csv แล้วกด Run workflow "ทดสอบกติกาเตือนภัยกับเหตุการณ์ในอดีต" เพื่อคำนวณใหม่</p></div>`;
 }
 
 function qualityCard(q) {
@@ -730,19 +794,20 @@ function renderAll() {
 }
 
 async function refresh() {
-  const [latest, alerts] = await Promise.all([getJSON("data/latest.json", true), getJSON("data/alerts_log.json", true)]);
+  const [latest, alerts, fr] = await Promise.all([getJSON("data/latest.json", true), getJSON("data/alerts_log.json", true), getJSON("data/flood_reports.json", true)]);
   if (latest) S.latest = latest;
   if (alerts) S.alerts = alerts;
+  if (fr) S.freports = fr;
   renderAll();
 }
 
 async function boot() {
   initMap();
   try {
-    const [tam, amp, admin, roads, ev] = await Promise.all([
+    const [tam, amp, admin, roads, ev, replay] = await Promise.all([
       getJSON("data/static/tambons.geojson"), getJSON("data/static/amphoes.geojson"), getJSON("data/static/admin.json"),
-      getJSON("data/static/roads.geojson", true), getJSON("data/static/event_analysis.json", true)]);
-    Object.assign(S, { tam, amp, admin, roads, event: ev });
+      getJSON("data/static/roads.geojson", true), getJSON("data/static/event_analysis.json", true), getJSON("data/static/replay.json", true)]);
+    Object.assign(S, { tam, amp, admin, roads, event: ev, replay });
     for (const f of tam.features) S.props[f.properties.tc] = f.properties;
   } catch (e) {
     $("#tab-area").innerHTML = `<div class="warnnote">${esc(e.message)}</div>`;
