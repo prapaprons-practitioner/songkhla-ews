@@ -114,5 +114,13 @@
   "archive": {
     "event_start": "2025-11-15",
     "event_end": "2025-12-05"
+  },
+
+  "flood_reports": {
+    "form_url": "",
+    "form_csv_url": "",
+    "window_before_h": 24, "confirm_window_h": 36,
+    "focus_amphoes": ["TH9011", "TH9001"],
+    "_note": "บันทึกเหตุน้ำท่วมจริง: ไฟล์ reports/flood_reports.csv ใน repo ถือว่าตรวจแล้ว · ถ้ามี Google Form ให้ใส่ form_url (ลิงก์ให้ประชาชนกดแจ้ง) และ form_csv_url (ลิงก์ CSV ของชีตคำตอบที่เผยแพร่ทางเว็บ) ระบบนับเฉพาะแถวที่คอลัมน์ 'ตรวจแล้ว' = ใช่ · เตือนทัน = ตำบลขึ้นถึงเตือนภัยภายใน window_before_h ชม. ก่อนน้ำท่วม"
   }
 }
