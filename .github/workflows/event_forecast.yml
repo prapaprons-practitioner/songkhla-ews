@@ -1,0 +1,46 @@
+name: เทียบพยากรณ์กับเหตุการณ์จริง
+
+# ดึงพยากรณ์ฝนย้อนหลังของ Open-Meteo (ล่วงหน้า 1–3 วัน และรอบล่าสุด) + CAPE ของช่วงเหตุการณ์
+# รันกติกาฝนของระบบซ้ำ แล้วเทียบกับฝนที่หน่วยงานรายงาน ระดับน้ำจริง และเหตุน้ำท่วมจริง
+# กด Run workflow เอง (ข้อมูลในอดีตไม่เปลี่ยน รันครั้งเดียวพอ หรือรันใหม่เมื่อแก้เกณฑ์ฝนหรือเพิ่ม reports/rain_reported.csv)
+# ผลลัพธ์: หน้าสรุปของรอบนี้ และไฟล์ site/data/static/event_forecast.json
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "วันเริ่ม (ปปปป-ดด-วว ค.ศ.)"
+        default: "2025-11-15"
+      end:
+        description: "วันสิ้นสุด"
+        default: "2025-11-30"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: event-forecast
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: ดึงระดับน้ำย้อนหลังจากสาขา archive
+        run: |
+          mkdir -p arch
+          git fetch --depth 1 origin archive
+          git archive FETCH_HEAD | tar -x -C arch   # copy files only, leave the main branch index clean
+
+      - name: ดึงพยากรณ์ย้อนหลังและเทียบกับเหตุการณ์จริง
+        run: python3 scripts/event_forecast.py --config config.json --static site/data/static --archive arch --start "${{ github.event.inputs.start || '2025-11-15' }}" --end "${{ github.event.inputs.end || '2025-11-30' }}" --out site/data/static/event_forecast.json
+
+      - name: บันทึกผลลง repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data/static/event_forecast.json
+          git commit -m "ผลเทียบพยากรณ์กับเหตุการณ์จริง" || echo "ผลไม่เปลี่ยน"
+          git pull -q --rebase origin main && git push origin HEAD:main
