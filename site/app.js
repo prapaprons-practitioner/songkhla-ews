@@ -763,7 +763,12 @@ function eventForecastCard() {
   const recFc = recRow ? fcv(recRow, "d1") : null;
   const lead = firstWarn && floodT ? (new Date(floodT.replace(" ", "T") + ":00+07:00") - new Date(firstWarn.t)) / 3.6e6 : null;
   const head = [];
-  if (firstWarn) head.push(`กติกาฝนของระบบขึ้น<b>เตือนภัย</b>ครั้งแรก ${timeTH(firstWarn.t)}${lead != null && lead > 0 ? ` ก่อนเหตุน้ำท่วมแรกที่บันทึกในตัวเมืองราว <b>${fmt(lead / 24, 1)} วัน</b> (${fmt(lead)} ชม.)` : ""}`);
+  if (firstWarn) head.push(`กติกาฝนของระบบขึ้น<b>เตือนภัย</b>ครั้งแรก ${timeTH(firstWarn.t)}${lead == null ? "" : lead > 0 ? ` ก่อนเหตุน้ำท่วมแรกที่บันทึกในตัวเมืองราว <b>${fmt(lead / 24, 1)} วัน</b> (${fmt(lead)} ชม.)` : ` <b>หลัง</b>เหตุน้ำท่วมแรกที่บันทึกในตัวเมือง ${fmt(-lead)} ชม. (เตือนไม่ทัน)`}`);
+  const firstWatch = A.days.flatMap((r) => [["07:00", r.rule_07], ["19:00", r.rule_19]].map(([h, x]) => ({ t: `${r.date}T${h}:00+07:00`, x }))).find((o) => (o.x?.lv ?? 0) >= 1);
+  if (firstWatch && firstWatch !== firstWarn) {
+    const lw = floodT ? (new Date(floodT.replace(" ", "T") + ":00+07:00") - new Date(firstWatch.t)) / 3.6e6 : null;
+    head.push(`ระดับเฝ้าระวังครั้งแรก ${timeTH(firstWatch.t)}${lw != null && lw > 0 ? ` ก่อนเหตุน้ำท่วมแรกราว ${fmt(lw)} ชม.` : ""}`);
+  }
   else head.push("กติกาฝนของระบบไม่ขึ้นถึงเตือนภัยในช่วงนี้");
   if (rec && recFc != null) head.push(`วันที่ฝนมากที่สุด (${thDate(rec.date)}) ${esc(rec.place)} วัดได้ <b>${fmt(+rec.mm, 1)} มม.</b> ขณะที่พยากรณ์ล่วงหน้า 1 วันเฉลี่ย ${E.models.length} โมเดลบอก <b>${fmt(recFc)} มม.</b>${recFc > 0 ? ` (ต่ำกว่าจริงราว ${fmt(rec.mm / recFc, 1)} เท่า)` : ""}`);
   const tabs = acs.length > 1 ? `<div class="segs">${acs.map((k) => `<button data-efac="${k}" class="${k === ac ? "on" : ""}">อ.${esc(E.amphoes[k].name)}</button>`).join("")}</div>` : "";
