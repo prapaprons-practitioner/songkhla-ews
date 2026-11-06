@@ -20,7 +20,7 @@ const KNOWN_GAPS = [
   ["ความลึกน้ำท่วมจริงบนพื้นที่", "ไม่มีเซนเซอร์บนถนนในภาคใต้ ระบบบอกได้แค่ความเสี่ยง ไม่ใช่ความลึก", "เทศบาล / ภาพดาวเทียม GISTDA (ต้องขอ API key)"],
 ];
 
-const S = { latest: null, tam: null, amp: null, admin: null, roads: null, event: null, alerts: [], freports: null, replay: null,
+const S = { latest: null, tam: null, amp: null, admin: null, roads: null, event: null, alerts: [], freports: null, replay: null, efc: null, efAc: null,
   props: {}, sel: { pc: null, ac: null, tc: null }, onlyRisk: false, q: "", rq: "", openRoad: null, layers: {} };
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -658,6 +658,7 @@ function renderGaps() {
     ${L0.urban_rain_cfg?.watch_1h ? `<tr><td>ฝนหนักในเขตเมือง (สถานีใดสถานีหนึ่งในเขต, มม.)</td><td class="n">1 ชม. ≥${L0.urban_rain_cfg.watch_1h} หรือ 3 ชม. ≥${L0.urban_rain_cfg.watch_3h}</td><td class="n">1 ชม. ≥${L0.urban_rain_cfg.warning_1h} หรือ 3 ชม. ≥${L0.urban_rain_cfg.warning_3h}</td><td>–</td></tr>` : ""}
     <tr><td>ระดับน้ำที่สถานี</td><td>ขึ้นเร็ว ≥${th.station.rise_watch_m_per_h} ม./ชม. หรือถึงตลิ่งใน ≤${th.station.eta_watch_h} ชม.</td><td>ต่ำกว่าตลิ่ง ≤${th.station.near_bank_m} ม. หรือถึงตลิ่งใน ≤${th.station.eta_warning_h} ชม.</td><td>ถึงหรือเกินตลิ่ง</td></tr>
     </table><p class="note">ดินอิ่มน้ำ (≥${th.soil_wet_m3m3} ม³/ม³) ยกระดับฝนจากเฝ้าระวังเป็นเตือนภัย เฉพาะเมื่อฝนพยากรณ์ 24 ชม. ≥${th.rain.soil_bump_min_next24 ?? 60} มม. หรือฝนสะสม ≥${th.rain.soil_bump_min_acc ?? 150} มม. · ฝนที่ตกแล้วใช้สถานีวัดฝนอันดับ 3 ของอำเภอ · ระดับขึ้นได้ทันที แต่ลดลงได้เมื่อค่าต่ำกว่าเดิม 2 รอบติดกัน · ไม่แจ้งเตือนซ้ำตำบลเดิมที่ระดับเดิมภายใน 6 ชม. · พื้นที่ที่ สสน. ระบุเสี่ยงน้ำป่าอยู่ระดับ${LV[th.flashflood_level]}ขึ้นไป · แก้เกณฑ์ได้ใน config.json</p></div>`;
+  h += eventForecastCard();
   h += replayCard();
   if (S.event) {
     const ev = S.event;
@@ -687,6 +688,12 @@ function renderGaps() {
     : '<div class="note">ยังไม่มีการแจ้งเตือน</div>'}</div>`;
   el.innerHTML = h;
   el.querySelectorAll("tr[data-tc]").forEach((tr) => tr.addEventListener("click", () => { const p = S.props[tr.dataset.tc]; if (p) select({ pc: p.pc, ac: p.ac, tc: p.tc }); }));
+  el.querySelectorAll("button[data-efac]").forEach((b) => b.addEventListener("click", () => {
+    S.efAc = b.dataset.efac;
+    const y = el.scrollTop;
+    renderGaps();
+    el.scrollTop = y;
+  }));
 }
 
 const safeUrl = (u) => (typeof u === "string" && /^https?:\/\//i.test(u.trim()) ? u.trim() : null);
@@ -731,6 +738,56 @@ function floodReportCard() {
     ${fr.counts?.pending ? `<p><b>รอตรวจ:</b> ${fr.counts.pending} รายงานจากแบบฟอร์ม</p>` : ""}
     ${live.length ? frRows(live.slice(0, 30)) : ""}
     <p class="note">เตือนทัน = ตำบลนั้น (หรืออำเภอนั้น ถ้าไม่ระบุตำบล) ขึ้นถึงเตือนภัยภายใน 24 ชม. ก่อนเวลาน้ำท่วม · "เตือนก่อน" นับจากครั้งแรกที่ขึ้นระดับในช่วงนั้นถึงเวลาน้ำท่วม ถ้าเป็นเวลาที่พบ/รายงาน น้ำอาจท่วมก่อนหน้านั้น จึงเป็นค่าสูงสุดที่เป็นไปได้ · การเตือนที่ยังไม่มีรายงานยืนยัน ไม่ได้แปลว่าเตือนผิด อาจแค่ยังไม่มีคนแจ้ง</p>${how}</div>`;
+}
+
+/* forecast issued ahead vs what really happened, day by day, for a past event */
+function eventForecastCard() {
+  const E = S.efc;
+  if (!E) return `<div class="card"><h3>พยากรณ์ล่วงหน้า vs เกิดจริง (น้ำท่วม พ.ย. 2568)</h3><p class="note">ยังไม่มีผล ให้กด Run workflow "เทียบพยากรณ์กับเหตุการณ์จริง" ในแท็บ Actions ของ GitHub หนึ่งครั้ง (ใช้เวลาราว 2–5 นาที)</p></div>`;
+  const acs = Object.keys(E.amphoes || {});
+  const ac = acs.includes(S.efAc) ? S.efAc : E.main;
+  const A = E.amphoes[ac];
+  if (!A) return "";
+  const mean = (xs) => { const v = xs.filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const fcv = (r, k) => mean(E.models.map((m) => r.fc[m]?.[k]));
+  const fcmax = (r, k) => { const v = E.models.map((m) => r.fc[m]?.[k]).filter((x) => x != null); return v.length ? Math.max(...v) : null; };
+  const lvB = (x) => (x && x.lv != null ? badge(x.lv) : '<span class="note">–</span>');
+  const isMain = ac === E.main;
+  const above = (v) => (v == null ? "–" : `<span class="${v > 0 ? "up" : ""}">${v > 0 ? "+" : ""}${fmt(v, 2)}</span>`);
+  const codes = Object.keys(E.stations || {});
+  // headline: first warning from the rain rule, the first recorded flood, and how far the forecast fell short on the record day
+  const firstWarn = A.days.flatMap((r) => [["07:00", r.rule_07], ["19:00", r.rule_19]].map(([h, x]) => ({ t: `${r.date}T${h}:00+07:00`, x }))).find((o) => (o.x?.lv ?? 0) >= 2);
+  const floodT = isMain ? Object.values(E.actual || {}).flatMap((a) => a.floods || []).map((f) => f.time).filter((t) => t && t.length > 10).sort()[0] : null;
+  const rec = (E.rain_reported_all || []).filter((r) => r.amphoe === A.name && /^1 วัน/.test(r.period || "")).sort((a, b) => b.mm - a.mm)[0];
+  const recRow = rec && A.days.find((r) => r.date === rec.date);
+  const recFc = recRow ? fcv(recRow, "d1") : null;
+  const lead = firstWarn && floodT ? (new Date(floodT.replace(" ", "T") + ":00+07:00") - new Date(firstWarn.t)) / 3.6e6 : null;
+  const head = [];
+  if (firstWarn) head.push(`กติกาฝนของระบบขึ้น<b>เตือนภัย</b>ครั้งแรก ${timeTH(firstWarn.t)}${lead != null && lead > 0 ? ` ก่อนเหตุน้ำท่วมแรกที่บันทึกในตัวเมืองราว <b>${fmt(lead / 24, 1)} วัน</b> (${fmt(lead)} ชม.)` : ""}`);
+  else head.push("กติกาฝนของระบบไม่ขึ้นถึงเตือนภัยในช่วงนี้");
+  if (rec && recFc != null) head.push(`วันที่ฝนมากที่สุด (${thDate(rec.date)}) ${esc(rec.place)} วัดได้ <b>${fmt(+rec.mm, 1)} มม.</b> ขณะที่พยากรณ์ล่วงหน้า 1 วันเฉลี่ย ${E.models.length} โมเดลบอก <b>${fmt(recFc)} มม.</b>${recFc > 0 ? ` (ต่ำกว่าจริงราว ${fmt(rec.mm / recFc, 1)} เท่า)` : ""}`);
+  const tabs = acs.length > 1 ? `<div class="segs">${acs.map((k) => `<button data-efac="${k}" class="${k === ac ? "on" : ""}">อ.${esc(E.amphoes[k].name)}</button>`).join("")}</div>` : "";
+  const rows = A.days.map((r) => {
+    const act = E.actual?.[r.date] || {};
+    const rr = (r.rain_reported || []).map((x) => `${fmt(+x.mm, 1)} <span class="note">${esc(x.place)} · ${esc(x.period)}</span>`).join("<br>") || '<span class="note">–</span>';
+    const fl = (act.floods || []).length;
+    return `<tr><td>${thDate(r.date)}</td>
+      <td class="n">${fcv(r, "d1") != null ? fmt(fcv(r, "d1")) : "–"}<br><span class="note">สูงสุด ${fmt(fcmax(r, "d1"))}</span></td>
+      <td class="n">${fcv(r, "d2") != null ? fmt(fcv(r, "d2")) : "–"}</td>
+      <td class="n">${fcv(r, "latest") != null ? fmt(fcv(r, "latest")) : "–"}</td>
+      <td class="n">${r.cape != null ? fmt(r.cape) : "–"}${r.storm_flag ? " ⚠" : ""}</td>
+      <td>${lvB(r.rule_07)}<br>${lvB(r.rule_19)}</td>
+      <td class="sep">${rr}</td>
+      ${isMain ? codes.map((c) => `<td class="n">${above(act.levels?.[c]?.above_bank)}</td>`).join("") + `<td>${act.level_rule_city != null ? badge(act.level_rule_city) : '<span class="note">–</span>'}</td><td>${fl ? `${fl} เหตุ` : '<span class="note">–</span>'}</td>` : ""}</tr>`;
+  }).join("");
+  return `<div class="card" id="efc"><h3>พยากรณ์ล่วงหน้า vs เกิดจริง ${thDate(E.window[0])}–${thDate(E.window[1])} ${new Date(E.window[0]).getFullYear() + 543}</h3>${tabs}
+    ${head.map((x) => `<p>${x}</p>`).join("")}
+    <p class="note">เลื่อนตารางไปทางขวาเพื่อดูฝั่งเกิดจริง →</p>
+    <table class="t efc"><tr><th rowspan="2">วันที่</th><th colspan="5">ฝั่งพยากรณ์ (อ.${esc(A.name)})</th><th colspan="${isMain ? codes.length + 3 : 1}" class="sep">ฝั่งเกิดจริง</th></tr>
+    <tr><th>ฝน 1 วันล่วงหน้า<br><span class="note">มม./วัน</span></th><th>2 วันล่วงหน้า</th><th>รอบล่าสุด</th><th>CAPE</th><th>กติกาฝน<br><span class="note">07:00 / 19:00</span></th><th class="sep">ฝนที่รายงาน (มม.)</th>
+    ${isMain ? codes.map((c) => `<th>${esc(c)}<br><span class="note">เทียบตลิ่ง ม.</span></th>`).join("") + '<th>กติการะดับน้ำ<br><span class="note">ตัวเมือง</span></th><th>น้ำท่วมที่บันทึก</th>' : ""}</tr>${rows}</table>
+    <p class="note">ฝนพยากรณ์ = ฝนรวม 07:00 น. ถึง 07:00 น. วันถัดไป (วันฝนแบบกรมอุตุนิยมวิทยา) ที่จุดกึ่งกลางอำเภอ เฉลี่ย ${E.models.length} โมเดล (${esc(E.models.join(", "))}) · "รอบล่าสุด" ใช้รอบพยากรณ์ที่ใกล้เวลาจริงที่สุด จึงดีกว่าที่ใช้ได้จริง · CAPE ⚠ = ถึงเกณฑ์วันเสี่ยงฝนฟ้าคะนอง (≥ ${fmt(E.storm_threshold)} J/kg) · กติกาฝน = รันเกณฑ์ฝนของระบบซ้ำตอน 07:00 และ 19:00 น. โดยใช้เฉพาะพยากรณ์ที่ออกก่อนเวลานั้น ไม่มีฝนจากสถานีวัด (ไม่มีข้อมูลย้อนหลัง) · ระดับน้ำ = ค่าสูงสุดของวันเทียบตลิ่ง (+ = ล้นตลิ่ง)</p>
+    <p class="note">ข้อจำกัด: ฝนจริงมีแค่ตัวเลขรายวันบางจุดจากกรมอุตุนิยมวิทยา กรมชลประทาน และข่าว ฝนที่จุดเดียวเทียบตรงๆ กับพยากรณ์ที่เป็นค่าเฉลี่ยพื้นที่กว้างราว 10–25 กม. ไม่ได้ · เพิ่มตัวเลขฝนได้ใน reports/rain_reported.csv แล้วกด Run workflow "เทียบพยากรณ์กับเหตุการณ์จริง" · รันเมื่อ ${esc(E.generated_at)}${E.notes?.length ? ` · ดึงบางส่วนไม่สำเร็จ ${E.notes.length} รายการ` : ""}</p></div>`;
 }
 
 function replayCard() {
@@ -832,6 +889,7 @@ async function boot() {
       getJSON("data/static/tambons.geojson"), getJSON("data/static/amphoes.geojson"), getJSON("data/static/admin.json"),
       getJSON("data/static/roads.geojson", true), getJSON("data/static/event_analysis.json", true), getJSON("data/static/replay.json", true)]);
     Object.assign(S, { tam, amp, admin, roads, event: ev, replay });
+    S.efc = await getJSON("data/static/event_forecast.json", true);
     for (const f of tam.features) S.props[f.properties.tc] = f.properties;
   } catch (e) {
     $("#tab-area").innerHTML = `<div class="warnnote">${esc(e.message)}</div>`;

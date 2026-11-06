@@ -167,3 +167,9 @@ table.t tr.click:hover { background: var(--surface-2); }
 :root[data-theme="dark"] .freshbar.warn{background:#3a2a10;color:#f3dcb4;border-bottom-color:#6b4a14}
 :root[data-theme="dark"] .freshbar .fr.bad{color:#ff9a8f}
 @media (max-width:700px){.freshbar:not(.warn){flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}}
+.segs{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px}
+.segs button{border:1px solid var(--line);background:var(--surface-2);border-radius:99px;padding:2px 10px;font-size:13px;cursor:pointer}
+.segs button.on{background:#0d6c78;color:#fff;border-color:#0d6c78}
+.t.efc{font-size:12px;min-width:820px}
+.t.efc th{font-size:11px;vertical-align:bottom}
+.t.efc .sep{border-left:2px solid var(--line)}
