@@ -986,6 +986,38 @@ def dam_status(cfg, stations, dam_raw, ev, now):
     return out
 
 
+def freshness(ctx, prev_latest, stations, gauges, fc, dams):
+    """How recent each kind of data really is (time of the newest reading, not of our run).
+    A source that fails keeps the time it last had, so the page can say "updated up to ..."."""
+    prev = (prev_latest or {}).get("freshness", {})
+    st = ctx.status
+    out = {}
+
+    def put(key, src, label, data_time, stale_h, extra=None):
+        ok = bool(st.get(src, {}).get("ok"))
+        p = prev.get(key, {})
+        rec = {"label": label, "ok": ok, "stale_h": stale_h,
+               "last_ok": iso(ctx.now) if ok else p.get("last_ok"),
+               "data_time": data_time or p.get("data_time")}
+        if not ok:
+            rec["error_since"] = p.get("error_since") if not p.get("ok", True) and p.get("error_since") else iso(ctx.now)
+        rec.update(extra or {})
+        out[key] = rec
+    ts = [s["time"] for s in stations or [] if s.get("time")]
+    fresh = sum(1 for s in stations or [] if not s.get("stale"))
+    put("levels", "levels", "ระดับน้ำ (สสน.)", max(ts) if ts else None, 2,
+        {"n": len(stations or []), "n_fresh": fresh})
+    gt = [g["time"] for g in gauges or [] if g.get("time")]
+    put("rain", "rain", "ฝนจากสถานีวัด (สสน.)", max(gt) if gt else None, 2, {"n": len(gauges or [])})
+    put("forecast", "forecast", "ฝนพยากรณ์ (Open-Meteo)", (fc or {}).get("fetched_at"), 12)
+    put("flashflood", "flashflood", "พื้นที่เสี่ยงน้ำป่า (สสน.)", iso(ctx.now) if st.get("flashflood", {}).get("ok") else None, 24)
+    for d in dams or []:
+        r = d.get("reservoir") or {}
+        if r.get("time") or prev.get("dam:" + d["name"]):
+            put("dam:" + d["name"], "levels", d["name"], r.get("time"), 6)
+    return out
+
+
 def write_rain_log(prev_dir, out_dir, gauges, now):
     """Append rainy readings to a monthly CSV (kept 3 months on the site; the monthly archive job keeps them for good)."""
     import csv
@@ -1127,6 +1159,7 @@ def main():
         "alerts_now": alerts, "notify": sent,
         "forecast_at": (fc or {}).get("fetched_at"),
         "urban_rain": ctx.urban, "urban_rain_cfg": cfg.get("urban_rain", {}), "dams": dams,
+        "freshness": freshness(ctx, prev_latest, stations, gauges, fc, dams),
         "quality": quality_summary(qlog), "storm_risk": storm, "rain_suspect": [{"k": g["k"], "name": g["name"], "tc": g["tc"], "why": g["suspect_why"]} for g in suspects],
     }
     out = args.out
