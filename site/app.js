@@ -779,14 +779,38 @@ function renderHeader() {
   const t = S.latest?.generated_at;
   if (!t) { u.textContent = "ยังไม่มีข้อมูล"; return; }
   const mins = (Date.now() - new Date(t).getTime()) / 60000;
-  u.textContent = `ข้อมูล ณ ${timeTH(t)} (${ago(t)})`;
+  u.textContent = `ระบบอัปเดตล่าสุด ${timeTH(t)} (${ago(t)})`;
   u.classList.toggle("stale", mins > 90);
   if (mins > 90) u.textContent += " · ระบบอาจหยุดอัปเดต";
   if (S.latest.area_name) $("#areaName").textContent = S.latest.area_name;
 }
 
+/* how recent each kind of data is: shown on every tab, turns amber when a source is late or failing */
+function renderFresh() {
+  const el = $("#fresh");
+  const F = S.latest?.freshness;
+  if (!el || !F) { if (el) el.hidden = true; return; }
+  const when = (t) => (t ? new Date(t).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" }) + " น." : "ไม่มีข้อมูล");
+  const items = Object.entries(F).map(([k, f]) => {
+    const age = f.data_time ? (Date.now() - new Date(f.data_time).getTime()) / 3.6e6 : null;
+    return { k, f, age, bad: !f.ok || age == null || age > f.stale_h };
+  }).sort((a, b) => b.bad - a.bad);
+  const anyBad = items.some((i) => i.bad);
+  const chip = (i) => {
+    const why = [];
+    if (i.bad && i.age != null) why.push(ago(i.f.data_time));
+    if (!i.f.ok) why.push(`ดึงไม่สำเร็จตั้งแต่ ${when(i.f.error_since)}`);
+    const extra = i.k === "levels" && i.f.n ? ` · สด ${i.f.n_fresh}/${i.f.n} สถานี` : i.k === "rain" && i.f.ok ? ` · ${i.f.n} สถานี` : "";
+    return `<span class="fr${i.bad ? " bad" : ""}"><b>${esc(i.f.label)}</b> ถึง ${when(i.f.data_time)}${why.length ? ` (${why.join(" · ")})` : ""}<span class="note">${extra}</span></span>`;
+  };
+  el.className = "freshbar" + (anyBad ? " warn" : "");
+  el.innerHTML = `<span class="frhead">${anyBad ? "⚠ ข้อมูลบางส่วนไม่เป็นปัจจุบัน ระดับเตือนภัยอาจไม่ตรงกับสถานการณ์จริง:" : "ข้อมูลอัปเดตถึง"}</span>${items.map(chip).join("")}`;
+  el.hidden = false;
+}
+
 function renderAll() {
   renderHeader();
+  renderFresh();
   refreshMapStyles();
   const cur = document.querySelector(".tabs button.on")?.dataset.tab || "area";
   renderArea();

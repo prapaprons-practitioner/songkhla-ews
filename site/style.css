@@ -158,3 +158,12 @@ table.t tr.click:hover { background: var(--surface-2); }
 .mid{color:#a15c00;font-weight:600}
 .reportbtn{display:block;text-align:center;margin:10px 0 2px;padding:9px 12px;border-radius:var(--radius);background:#0d6c78;color:#fff;font-weight:600;text-decoration:none}
 .reportbtn:hover{background:#0a5761}
+.freshbar{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;padding:5px 16px;font-size:12px;color:var(--ink-2);background:var(--surface-2);border-bottom:1px solid var(--line)}
+.freshbar .frhead{font-weight:600}
+.freshbar .fr b{font-weight:600}
+.freshbar.warn{background:#fff4e0;color:#5c3b00;border-bottom-color:#f0c37a}
+.freshbar .fr.bad{color:#b3261e}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .freshbar.warn{background:#3a2a10;color:#f3dcb4;border-bottom-color:#6b4a14}:root:not([data-theme="light"]) .freshbar .fr.bad{color:#ff9a8f}}
+:root[data-theme="dark"] .freshbar.warn{background:#3a2a10;color:#f3dcb4;border-bottom-color:#6b4a14}
+:root[data-theme="dark"] .freshbar .fr.bad{color:#ff9a8f}
+@media (max-width:700px){.freshbar:not(.warn){flex-wrap:nowrap;overflow-x:auto;white-space:nowrap}}
