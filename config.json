@@ -116,6 +116,20 @@
     "event_end": "2025-12-05"
   },
 
+  "tracker": {
+    "enabled": true, "start": "2026-11-10", "end": "2026-11-30", "label": "ช่วงเฝ้าระวังฝน 10–30 พ.ย. 2569",
+    "areas": {
+      "hatyai": {"name": "อ.หาดใหญ่", "amphoe": "TH9011", "forecast_amphoe": "TH9011"},
+      "khohong": {"name": "ฝั่งเขาคอหงส์", "center": [6.975, 100.53], "radius_km": 6, "forecast_amphoe": "TH9012"},
+      "sadao": {"name": "ต้นน้ำ อ.สะเดา", "amphoe": "TH9010", "forecast_amphoe": "TH9010"}
+    },
+    "stations": ["X.174", "SLA003", "X.173A", "X.44"],
+    "station_roles": {"X.174": "คลองหวะ ฝั่งคอหงส์", "SLA003": "ต้นน้ำ สะเดา", "X.173A": "ต้นน้ำ บ้านม่วงก็อง", "X.44": "กลางเมืองหาดใหญ่"},
+    "scenario_b_stations": ["X.174"], "scenario_c_stations": ["SLA003", "X.173A", "X.44"],
+    "thresholds": {"near_bank_m": 1.0, "rain24_b": 150, "heavy_mm_h": 30},
+    "_note": "สถานการณ์ ก. ท่วมขัง/น้ำหลากเป็นจุด (ฝน ≥ heavy_mm_h มม./ชม. หรือฝนหนักในเมือง) · ข. น้ำหลากจากเขาคอหงส์ (X.174 ห่างตลิ่ง ≤ near_bank_m หรือฝน 24 ชม. ≥ rain24_b) · ค. ท่วมลึกแบบปี 2568 (สถานีต้นน้ำ/คลองหลักห่างตลิ่ง ≤ near_bank_m) · ตั้งจากการวิเคราะห์ พ.ย. 2568 เป็นค่าเบื้องต้น"
+  },
+
   "flood_reports": {
     "form_url": "",
     "form_csv_url": "",

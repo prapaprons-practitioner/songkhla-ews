@@ -20,7 +20,7 @@ const KNOWN_GAPS = [
   ["ความลึกน้ำท่วมจริงบนพื้นที่", "ไม่มีเซนเซอร์บนถนนในภาคใต้ ระบบบอกได้แค่ความเสี่ยง ไม่ใช่ความลึก", "เทศบาล / ภาพดาวเทียม GISTDA (ต้องขอ API key)"],
 ];
 
-const S = { latest: null, tam: null, amp: null, admin: null, roads: null, event: null, alerts: [], freports: null, replay: null, efc: null, efAc: null,
+const S = { latest: null, tam: null, amp: null, admin: null, roads: null, event: null, alerts: [], freports: null, replay: null, efc: null, efAc: null, tracker: null,
   props: {}, sel: { pc: null, ac: null, tc: null }, onlyRisk: false, q: "", rq: "", openRoad: null, layers: {} };
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -356,6 +356,7 @@ function renderArea() {
     const n = tamCounts((p) => p.ac === a.ac);
     html += hero(`อ.${a.a}`, `จ.${a.p}`, L0?.amphoes?.[a.ac]?.lv, n);
     html += stormCard((x) => x.ac === a.ac);
+    if (S.tracker && ["TH9011", "TH9012", "TH9010"].includes(a.ac)) html += trackerCard();
     html += rainCard(a.ac);
     html += childList(Object.values(S.props).filter((p) => p.ac === a.ac).map((p) => ({ key: p.tc, attr: "tc", name: "ต." + p.t, lv: lvOf(p.tc), meta: (L0?.tambons?.[p.tc]?.reasons?.[0]?.text || "ไม่พบปัจจัยเสี่ยง").slice(0, 90) })));
   } else if (S.sel.pc) {
@@ -370,6 +371,7 @@ function renderArea() {
   } else {
     const n = tamCounts(() => true);
     html += stormCard(() => true).replace('<div class="card storm">', '<div class="card storm" id="storm-top">');
+    html += trackerCard();
     html += hero(L0?.area_name || "ทุกจังหวัด", `${Object.keys(S.props).length} ตำบล · ${S.admin.amphoes.length} อำเภอ`, Math.max(...Object.values(L0?.provinces || {}).map((p) => p.lv ?? 0), 0), n);
     if (safeUrl(S.freports?.form_url)) html += `<a class="reportbtn" href="${esc(S.freports.form_url)}" target="_blank" rel="noopener">แจ้งเหตุน้ำท่วมที่เห็นจริง</a><p class="note">ช่วยให้ตรวจได้ว่าระบบเตือนทันหรือไม่ · ไม่ต้องใส่ชื่อหรือเบอร์โทร</p>`;
     html += childList(S.admin.provinces.map((p) => {
@@ -400,6 +402,85 @@ function stormCard(filter) {
     : `<ul class="list">${flagged.map((a) => `<li data-ac="${a.ac}"><span class="dot" style="background:var(--storm, #7b5cd6)"></span><div><div class="nm">อ.${esc(a.a)} <span class="meta">จ.${esc(a.p)}</span></div><div class="meta">CAPE ${fmt(a.r.cape)} J/kg ช่วง ${esc(a.r.time)} น.</div></div></li>`).join("")}</ul>`;
   return `<div class="card storm">${head}${body}
     <p class="note">บรรยากาศพร้อมเกิดฝนฟ้าคะนองรุนแรง (CAPE ≥ ${fmt(sr.threshold)} J/kg) บอกได้แค่ว่าเป็น "วันเสี่ยง" ไม่ได้บอกเวลาหรือจุดที่ฝนจะตก ใช้เป็นสัญญาณให้ยกของที่ยกง่ายขึ้นที่สูงไว้ก่อน · ทดสอบย้อนหลังที่หาดใหญ่ 14 ต.ค.–2 พ.ย. 2569 จับวันฝนหนักได้ 3 ใน 5 วัน และเตือนผิด 2 วันจาก 16 วัน · ยังไม่ส่งแจ้งเตือนและไม่ยกระดับตำบล</p></div>`;
+}
+
+/* daily watch for the rainy period: forecast vs rain that fell, key stations vs the 2025 path, and where it is heading */
+const SCN = {
+  "ก": ["ก. ท่วมขัง/น้ำหลากเป็นจุด", "ฝนหนักเป็นช่วงๆ ถนนต่ำและชุมชนริมคลองย่อยท่วมเร็วแล้วลดในไม่กี่ชั่วโมง", "#f6d55c", "#3a2f00"],
+  "ข": ["ข. น้ำหลากจากเขาคอหงส์เข้าเมือง", "แบบระลอกแรกของปี 2568: น้ำจากเขาทางตะวันออกเข้าเมืองตามถนนสาย 1–3 ภายในไม่กี่ชั่วโมง", "#f08c2e", "#fff"],
+  "ค": ["ค. ท่วมลึกและนานแบบปี 2568", "คลองอู่ตะเภาล้นจากน้ำต้นน้ำ ท่วมสูงหลายเมตรและนานหลายวัน", "#d7263d", "#fff"],
+};
+function trackerCard() {
+  const T = S.tracker;
+  if (!T || !T.days || !T.window) return "";
+  if (Date.now() > new Date(T.window[1] + "T23:59:00+07:00").getTime() + 3 * 864e5) return "";  // the watch period is over
+  const A = T.areas || {}, areas = Object.keys(A);
+  const now = T.now || {};
+  const sc = now.scenario;
+  const chip = (s, small) => s ? `<span class="scn${small ? " sm" : ""}" style="background:${SCN[s][2]};color:${SCN[s][3]}">${small ? esc(s) : esc(SCN[s][0])}</span>` : `<span class="scn${small ? " sm" : ""}" style="background:var(--lv0);color:#123">${small ? "–" : "ยังไม่เข้าสถานการณ์ใด"}</span>`;
+  const mm = (f) => (f ? `${fmt(f.mean)}<span class="note"> (${fmt(f.max)})</span>` : "–");
+  const rel = (v) => (v == null ? "–" : `<span class="${v > -1 ? "up" : ""}">${v >= 0 ? "ล้น +" : ""}${fmt(v, 2)}</span>`);
+  // 2025 reference from the event benchmark: daily max relative to bank on chosen days, and the peak
+  const ref = (id, day) => {
+    const b = BM()?.stations?.[String(id)];
+    if (!b) return null;
+    const i0 = Math.round((new Date(`2025-11-${day}T00:00:00+07:00`) - new Date(BM().start)) / 3.6e6);
+    const v = b.rel.slice(i0, i0 + 24).filter((x) => x != null);
+    return v.length ? Math.max(...v) : null;
+  };
+  const peak = (id) => { const b = BM()?.stations?.[String(id)]; return b ? [b.rel[b.peak_i], bmTime(b.peak_i)] : [null, ""]; };
+  // one block per station: a scale from far below the bank to above it, with last year's path and where the water is now
+  const scale = (vals, nowV) => {
+    const W = 300, H = 26, lo = -7.5, hi = 3.5, x = (v) => 6 + ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (W - 12);
+    const mk = vals.filter((v) => v[0] != null).map(([v, lab, col]) => `<circle cx="${x(v).toFixed(1)}" cy="13" r="4" fill="${col}"><title>${esc(lab)} ${fmt(v, 2)} ม.</title></circle>`).join("");
+    return `<svg class="trk-scale" viewBox="0 0 ${W} ${H}" role="img" aria-label="ระดับน้ำเทียบตลิ่ง">
+      <rect x="${x(-1).toFixed(1)}" y="6" width="${(x(0) - x(-1)).toFixed(1)}" height="14" fill="#f08c2e" opacity=".25"/>
+      <rect x="${x(0).toFixed(1)}" y="6" width="${(x(hi) - x(0)).toFixed(1)}" height="14" fill="#d7263d" opacity=".15"/>
+      <line x1="6" y1="13" x2="${W - 6}" y2="13" stroke="var(--ink-3)" stroke-width="1"/>
+      <line x1="${x(0).toFixed(1)}" y1="3" x2="${x(0).toFixed(1)}" y2="23" stroke="var(--ink-2)" stroke-width="1.5"/>
+      ${mk}${nowV != null ? `<circle cx="${x(nowV).toFixed(1)}" cy="13" r="6" fill="#0d6c78" stroke="#fff" stroke-width="2"><title>ตอนนี้ ${fmt(nowV, 2)} ม.</title></circle>` : ""}</svg>`;
+  };
+  const stRows = Object.entries(T.stations || {}).map(([code, st]) => {
+    const n = now.levels?.[code];
+    const s = (S.latest?.stations || []).find((x) => x.k === st.k);
+    const an = s ? analogShort(s) : "";
+    const [pk, pkT] = peak(st.id);
+    const r19 = ref(st.id, 19), r21 = ref(st.id, 21);
+    return `<div class="trk-st"><div><b>${esc(code)}</b> ${esc(st.name)} <span class="note">${esc(st.role || "")}</span></div>
+      <div>ตอนนี้ <b>${n ? rel(n.rel) : "–"}</b> ม.${n?.slope != null && Math.abs(n.slope) > 0.005 ? ` <span class="note">${n.slope > 0 ? "กำลังขึ้น" : "กำลังลด"} ${fmt(Math.abs(n.slope), 2)} ม./ชม.</span>` : ""}
+      <span class="note"> · ปี 68: 19 พ.ย. ${rel(r19)} → 21 พ.ย. ${rel(r21)} → ยอด ${rel(pk)} (${esc(pkT)})</span></div>
+      ${scale([[r19, "19 พ.ย. 68", "#bbb"], [r21, "21 พ.ย. 68", "#888"], [pk, "ยอดน้ำ 68", "#444"]], n ? n.rel : null)}
+      ${an ? `<div class="note">${esc(an)}</div>` : ""}</div>`;
+  }).join("");
+  const nx = (T.next || []).map((d) => `<tr><td>${thDate(d.date)}</td>${areas.map((a) => `<td class="n">${mm(d.fc?.[a])}</td>`).join("")}</tr>`).join("");
+  const today = new Date(S.latest?.generated_at || Date.now()).toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" });
+  const codes = Object.keys(T.stations || {});
+  const dayRows = Object.keys(T.days).sort().reverse().map((d) => {
+    const r = T.days[d];
+    const partial = !r.obs_final && r.obs_until ? `<br><span class="note">ถึง ${new Date(r.obs_until).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bangkok" })} น.</span>` : "";
+    const ratio = (a) => { const f = r.fc?.[a]?.mean, o = r.obs?.[a]?.max; return r.obs_final && f > 0 && o > f * 2 ? ` <span class="up">×${fmt(o / f, 1)}</span>` : ""; };
+    return `<tr${d === today ? ' class="today"' : ""}><td>${thDate(d)}${partial}</td>
+      ${areas.map((a) => `<td class="n">${mm(r.fc?.[a])}</td>`).join("")}
+      ${areas.map((a, i) => `<td class="n${i === 0 ? " sep" : ""}">${r.obs?.[a] ? `${fmt(r.obs[a].max)}${ratio(a)}` : "–"}</td>`).join("")}
+      ${codes.map((c, i) => `<td class="n${i === 0 ? " sep" : ""}">${rel(r.levels?.[c]?.max_rel)}</td>`).join("")}
+      <td class="sep">${chip(r.scenario, true)}</td></tr>`;
+  }).join("");
+  const th = T.thresholds || {};
+  return `<div class="card tracker" id="tracker"><h3>ติดตามรายวัน: ${esc(T.label || "")}</h3>
+    <div class="scn-now">${chip(sc)}<span class="note">ตอนนี้ · ${timeTH(now.at)}</span></div>
+    ${sc ? `<p class="note">${esc(SCN[sc][1])}</p>` : ""}
+    ${now.signals?.length ? `<ul class="sig">${now.signals.map((x) => `<li>${chip(x.s, true)} ${esc(x.text)}</li>`).join("")}</ul>` : '<p class="note">ยังไม่มีฝนหนัก ≥ ' + fmt(th.heavy_mm_h) + ' มม./ชม. ฝน 24 ชม. ยังไม่ถึง ' + fmt(th.rain24_b) + ' มม. และสถานีหลักยังห่างตลิ่งเกิน ' + fmt(th.near_bank_m) + ' ม.</p>'}
+    <p><b>สถานีหลักเทียบเส้นทางปี 2568</b> <span class="note">(ระดับน้ำเทียบตลิ่ง ม. · ติดลบ = ต่ำกว่าตลิ่ง)</span></p>
+    ${stRows}
+    <p class="note trk-legend"><span class="dotc" style="background:#0d6c78"></span>ตอนนี้ <span class="dotc" style="background:#bbb"></span>19 พ.ย. 68 <span class="dotc" style="background:#888"></span>21 พ.ย. 68 <span class="dotc" style="background:#444"></span>ยอดน้ำ 68 · เส้นตั้ง = ตลิ่ง · แถบส้ม = ห่างตลิ่งไม่เกิน 1 ม. · ระดับในเมืองท่วมก่อน X.44 ล้นตลิ่งได้ (ปี 68 ราว 10 ชม.)</p>
+    <p><b>ฝนพยากรณ์ 3 วันข้างหน้า</b> <span class="note">(มม./วัน 07:00–07:00 น. · เฉลี่ย 3 โมเดล และค่าสูงสุดในวงเล็บ)</span></p>
+    <table class="t trk"><tr><th>วัน</th>${areas.map((a) => `<th>${esc(A[a])}</th>`).join("")}</tr>${nx}</table>
+    <p class="note">ปี 2568 ฝนจริงมากกว่าพยากรณ์ล่วงหน้า 1 วัน 4–7 เท่า ตัวเลขพยากรณ์จึงใช้ดูแนวโน้ม ไม่ใช่ปริมาณที่จะตกจริง</p>
+    <p><b>บันทึกรายวัน</b> <span class="note">เลื่อนตารางไปทางขวาได้ →</span></p>
+    <table class="t trk wide"><tr><th rowspan="2">วัน</th><th colspan="${areas.length}">ฝนพยากรณ์ (มม.)</th><th colspan="${areas.length}" class="sep">ฝนจริงสูงสุด (มม.)</th><th colspan="${codes.length}" class="sep">ระดับน้ำสูงสุดเทียบตลิ่ง (ม.)</th><th rowspan="2" class="sep">สถานการณ์</th></tr>
+    <tr>${areas.map((a) => `<th>${esc(A[a])}</th>`).join("")}${areas.map((a, i) => `<th${i === 0 ? ' class="sep"' : ""}>${esc(A[a])}</th>`).join("")}${codes.map((c, i) => `<th${i === 0 ? ' class="sep"' : ""}>${esc(c)}</th>`).join("")}</tr>${dayRows}</table>
+    <p class="note">สถานการณ์ ก. ฝน ≥ ${fmt(th.heavy_mm_h)} มม./ชม. หรือฝนหนักในเมือง · ข. X.174 ห่างตลิ่ง ≤ ${fmt(th.near_bank_m)} ม. หรือฝน 24 ชม. ≥ ${fmt(th.rain24_b)} มม. · ค. สะเดา/X.173A/X.44 ห่างตลิ่ง ≤ ${fmt(th.near_bank_m)} ม. · เกณฑ์ตั้งจากการวิเคราะห์ พ.ย. 2568 เป็นค่าเบื้องต้น ใช้ดูทิศทาง ไม่ใช่ประกาศเตือนภัย ให้ติดตามประกาศจังหวัดและ ปภ. 1784
+    · พยากรณ์ของแต่ละวันล็อกตอน 07:00 น. ของวันนั้น · ฝนจริง = สถานีที่ฝนมากที่สุดในพื้นที่ ช่วง 07:00–07:00 น. ไม่นับสถานีที่ยังไม่มีสถานีข้างเคียงยืนยัน · ×N = ฝนจริงมากกว่าพยากรณ์ N เท่า · ฝั่งเขาคอหงส์ใช้พยากรณ์ที่จุดกึ่งกลาง อ.นาหม่อม และสถานีวัดฝนในรัศมี 6 กม. จากเขาคอหงส์</p></div>`;
 }
 
 function stormScoreCard() {
@@ -881,6 +962,7 @@ function renderAll() {
 
 async function refresh() {
   const [latest, alerts, fr] = await Promise.all([getJSON("data/latest.json", true), getJSON("data/alerts_log.json", true), getJSON("data/flood_reports.json", true)]);
+  S.tracker = await getJSON("data/tracker.json", true);
   if (latest) S.latest = latest;
   if (alerts) S.alerts = alerts;
   if (fr) S.freports = fr;

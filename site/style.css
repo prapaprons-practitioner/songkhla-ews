@@ -173,3 +173,16 @@ table.t tr.click:hover { background: var(--surface-2); }
 .t.efc{font-size:12px;min-width:820px}
 .t.efc th{font-size:11px;vertical-align:bottom}
 .t.efc .sep{border-left:2px solid var(--line)}
+.scn{display:inline-block;border-radius:99px;padding:3px 12px;font-weight:700;font-size:14px}
+.scn.sm{padding:0 8px;font-size:12px;min-width:22px;text-align:center}
+.scn-now{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0}
+.card.tracker{border-left:4px solid #0d6c78}
+.card.tracker .sig{margin:6px 0;padding-left:0;list-style:none;font-size:13px}
+.card.tracker .sig li{margin:3px 0}
+.t.trk{font-size:12px}
+.t.trk.wide{min-width:760px}
+.t.trk .sep{border-left:2px solid var(--line)}
+.t.trk tr.today td{background:var(--surface-2)}
+.trk-st{padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.trk-scale{width:100%;max-width:340px;height:26px;display:block;margin:2px 0}
+.dotc{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 3px 0 8px;vertical-align:0}

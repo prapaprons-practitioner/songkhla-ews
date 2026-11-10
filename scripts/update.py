@@ -10,6 +10,7 @@ from collections import Counter
 from datetime import timedelta
 
 import flood_reports as FR
+import tracker as TR
 from common import (ICT, TambonIndex, find_records, fnum, http_get, iso, load_json, norm_code,
                     norm_name, now_utc, parse_iso, parse_local, save_json, summary, th)
 
@@ -1177,6 +1178,13 @@ def main():
     save_json(os.path.join(out, "level_log.json"), lvlog)
     save_json(os.path.join(out, "flood_reports.json"), freports)
     write_rain_log(args.prev, out, gauges or [], ctx.now)
+    try:  # daily watch for the rainy season: never let it break the main update
+        tr = TR.update(cfg, load_json(os.path.join(args.prev, "tracker.json"), None), fc, gauges or [], stations or [], hist,
+                       ctx.urban, os.path.join(out, "rain_log"), ctx.now, tam_props)
+        if tr:
+            save_json(os.path.join(out, "tracker.json"), tr)
+    except Exception as e:  # noqa: BLE001
+        print(f"::warning::ตัวติดตามรายวัน: {e}")
 
     # run summary
     cnt = [0, 0, 0, 0, 0]
